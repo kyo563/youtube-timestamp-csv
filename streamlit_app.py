@@ -6,7 +6,7 @@ import requests
 import urllib.parse
 from typing import Tuple, List, Optional
 
-st.set_page_config(page_title="TS-DBジェネレーター", layout="centered")
+st.set_page_config(page_title="YouTubeタイムスタンプCSVジェネレーター", layout="centered")
 
 st.title("楽曲データベースジェネレーター")
 st.write(
