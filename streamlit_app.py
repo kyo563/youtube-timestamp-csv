@@ -4,22 +4,37 @@ import csv
 import io
 import requests
 import urllib.parse
+from datetime import datetime
 from typing import Tuple, List, Optional
 
-st.set_page_config(page_title="タイムスタンプCSVジェネレーター", layout="centered")
+st.set_page_config(page_title="YouTubeタイムスタンプCSVジェネレーター", layout="centered")
 
-st.title("🎵 タイムスタンプCSVジェネレーター")
+st.title("🎵 YouTubeタイムスタンプCSVジェネレーター")
 st.write(
     "YouTube動画のURLとタイムスタンプリストからCSVを生成します。"
-    "出力は **アーティスト名 / 楽曲名 / YouTubeリンク** の3列固定で、"
-    "リンク列は動画タイトル表示のハイパーリンクになります。"
-    "CSVのダウンロード名も動画タイトルに自動設定します（UTF-8 BOM）。"
+    "出力は **アーティスト名 / 楽曲名 / YouTubeリンク** の3列固定です。"
+    "リンク列の表示名は **公開日(yyyymmdd) + 動画タイトル** になります（APIキー未設定時は手動入力で対応します）。"
 )
+
+# 表示名の区切り（必要なら '+' や '_' に変更可）
+DATE_TITLE_SEPARATOR = " "  # 例: " + " や "_" に変更可能
 
 # ------------------------------
 # 入力UI
 # ------------------------------
 url = st.text_input("1. YouTube動画のURL", placeholder="https://www.youtube.com/watch?v=xxxxxxxxxxx")
+
+# APIキー（Secrets優先、未設定なら任意で手動入力）
+API_KEY = st.secrets.get("YT_API_KEY", "")
+if not API_KEY:
+    with st.expander("YouTube APIキー（任意。未設定でも手動で公開日を指定できます）"):
+        API_KEY = st.text_input("YT_API_KEY", type="password")
+
+# API未使用時の手動公開日
+manual_date = ""
+if not API_KEY:
+    manual_date = st.text_input("公開日 (yyyymmdd) を手動指定（API未設定時に利用／任意）", placeholder="例: 20250101")
+
 timestamps = st.text_area(
     "2. 楽曲リスト（タイムスタンプ付き）",
     placeholder="例：\n0:35 楽曲名A - アーティスト名A\n6:23 楽曲名B / アーティスト名B\n1:10:05 アーティスト名C「楽曲名C」",
@@ -35,7 +50,7 @@ def is_valid_youtube_url(u: str) -> bool:
     return bool(pattern.match(u or ""))
 
 def extract_video_id(u: str) -> Optional[str]:
-    """URLからVideo IDを頑健に抽出（watch?v= / youtu.be / shorts/ に対応）。"""
+    """URLからVideo IDを抽出（watch?v= / youtu.be / shorts/ に対応）です。"""
     if not u:
         return None
     try:
@@ -62,7 +77,7 @@ def extract_video_id(u: str) -> Optional[str]:
         return None
 
 def normalize_text(s: str) -> str:
-    """全角→半角など軽微な正規化。余計な空白を整理。"""
+    """全角→半角など軽微な正規化と空白整形です。"""
     s = (s or "").replace("／", "/").replace("–", "-").replace("―", "-").replace("ー", "-")
     s = s.replace("　", " ").strip()
     return re.sub(r"\s+", " ", s)
@@ -113,7 +128,7 @@ def parse_line(line: str) -> Tuple[Optional[int], Optional[str], Optional[str]]:
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_video_title_from_oembed(watch_url: str) -> str:
-    """oEmbedで動画タイトルを取得（APIキー不要）。失敗時は既定名。"""
+    """oEmbedで動画タイトルを取得（APIキー不要）です。失敗時は既定名です。"""
     try:
         r = requests.get(
             "https://www.youtube.com/oembed",
@@ -127,14 +142,35 @@ def fetch_video_title_from_oembed(watch_url: str) -> str:
         pass
     return "YouTube動画"
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_published_yyyymmdd(video_id: str, api_key: str) -> Optional[str]:
+    """YouTube Data API v3で公開日を取得し yyyymmdd で返します（APIキー必須）。"""
+    if not api_key:
+        return None
+    try:
+        url = "https://www.googleapis.com/youtube/v3/videos"
+        params = {"part": "snippet", "id": video_id, "key": api_key}
+        r = requests.get(url, params=params, timeout=6)
+        if r.status_code != 200:
+            return None
+        items = (r.json() or {}).get("items", [])
+        if not items:
+            return None
+        publishedAt = items[0].get("snippet", {}).get("publishedAt", "")
+        # 例: 2020-01-02T03:04:05Z
+        dt = datetime.strptime(publishedAt, "%Y-%m-%dT%H:%M:%SZ")
+        return dt.strftime("%Y%m%d")
+    except Exception:
+        return None
+
 def make_hyperlink_formula(url_: str, display_text: str) -> str:
-    """Excel用ハイパーリンク式。ダブルクォートはエスケープ。"""
-    safe_title = (display_text or "").replace('"', '""')
-    return f'=HYPERLINK("{url_}","{safe_title}")'
+    """Excel用ハイパーリンク式です。ダブルクォートはエスケープします。"""
+    safe = (display_text or "").replace('"', '""')
+    return f'=HYPERLINK("{url_}","{safe}")'
 
 def make_safe_filename(name: str, ext: str = ".csv") -> str:
-    """ファイル名に使えない文字を置換し、長さも制限。"""
-    name = re.sub(r'[\\/\:\*\?"<>\|\x00-\x1F]', "_", (name or ""))
+    """ファイル名に使えない文字を置換し、長さも制限します。"""
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1F]', "_", name or "")
     name = name.strip().strip(".")
     if not name:
         name = "youtube_song_list"
@@ -156,7 +192,22 @@ def generate_rows(u: str, ts: str) -> Tuple[List[List[str]], List[dict], List[st
     if not vid:
         raise ValueError("URLからビデオIDを抽出できませんでした。")
     base_watch = f"https://www.youtube.com/watch?v={vid}"
+
+    # タイトル
     video_title = fetch_video_title_from_oembed(base_watch)
+
+    # 公開日（APIがあれば自動、なければ手動）
+    date_yyyymmdd: Optional[str] = None
+    if API_KEY:
+        date_yyyymmdd = fetch_published_yyyymmdd(vid, API_KEY)
+    if not date_yyyymmdd and manual_date and re.fullmatch(r"\d{8}", manual_date):
+        date_yyyymmdd = manual_date
+
+    # 表示名（公開日が取れた場合は先頭に付与）
+    if date_yyyymmdd:
+        display_name = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{video_title}"
+    else:
+        display_name = video_title  # 取得できなければタイトルのみ
 
     # ヘッダは3列固定
     rows: List[List[str]] = [["アーティスト名", "楽曲名", "YouTubeリンク"]]
@@ -173,13 +224,14 @@ def generate_rows(u: str, ts: str) -> Tuple[List[List[str]], List[dict], List[st
             continue
 
         jump = f"{base_watch}&t={sec}s"
-        hyperlink = make_hyperlink_formula(jump, video_title)
+        hyperlink = make_hyperlink_formula(jump, display_name)
         rows.append([artist, song, hyperlink])
 
         parsed_preview.append({
             "time_seconds": sec,
             "artist": artist,
             "song": song,
+            "display_name": display_name,
             "hyperlink_formula": hyperlink,
         })
 
