@@ -13,11 +13,11 @@ st.title("🎵 YouTubeタイムスタンプCSVジェネレーター")
 st.write(
     "YouTube動画のURLとタイムスタンプリストからCSVを生成します。"
     "出力は **アーティスト名 / 楽曲名 / YouTubeリンク** の3列固定です。"
-    "リンク列の表示名は **公開日(yyyymmdd) + 動画タイトル** になります（APIキー未設定時は手動入力で対応します）。"
+    "リンク列の表示名は **公開日(yyyymmdd)+動画タイトル** になります（APIキー未設定時は手動入力可）。"
 )
 
-# 表示名の区切り（必要なら '+' や '_' に変更可）
-DATE_TITLE_SEPARATOR = " "  # 例: " + " や "_" に変更可能
+# 表示名の区切りを「+」に固定（例: 20250101+My Video Title）
+DATE_TITLE_SEPARATOR = "+"
 
 # ------------------------------
 # 入力UI
@@ -30,7 +30,7 @@ if not API_KEY:
     with st.expander("YouTube APIキー（任意。未設定でも手動で公開日を指定できます）"):
         API_KEY = st.text_input("YT_API_KEY", type="password")
 
-# API未使用時の手動公開日
+# API未使用時の手動公開日（8桁）
 manual_date = ""
 if not API_KEY:
     manual_date = st.text_input("公開日 (yyyymmdd) を手動指定（API未設定時に利用／任意）", placeholder="例: 20250101")
@@ -77,10 +77,10 @@ def extract_video_id(u: str) -> Optional[str]:
         return None
 
 def normalize_text(s: str) -> str:
-    """全角→半角など軽微な正規化と空白整形です。"""
-    s = (s or "").replace("／", "/").replace("–", "-").replace("―", "-").replace("ー", "-")
-    s = s.replace("　", " ").strip()
-    return re.sub(r"\s+", " ", s)
+    """全角→半角など軽微な正規化と空白整形です。※伸ばし棒「ー」は変換しません。"""
+    s = (s or "").replace("／", "/")   # 全角スラッシュのみ半角へ
+    s = s.replace("　", " ").strip()  # 全角スペース→半角
+    return re.sub(r"\s+", " ", s)     # 連続空白を1つに
 
 def parse_line(line: str) -> Tuple[Optional[int], Optional[str], Optional[str]]:
     """
@@ -108,20 +108,20 @@ def parse_line(line: str) -> Tuple[Optional[int], Optional[str], Optional[str]]:
         artist = normalize_text(artist)
         return (seconds, artist if artist else "N/A", song if song else "N/A")
 
-    # 区切り候補
-    seps = [" - ", " — ", " / ", " by ", " BY ", "/"]
-    for sep in seps:
-        if sep in info:
-            left, right = info.split(sep, 1)
-            left, right = left.strip(), right.strip()
-            # アルファベット多い方をアーティストと仮定（簡易ヒューリスティック）
-            alpha_left = len(re.findall(r"[A-Za-z]", left))
-            alpha_right = len(re.findall(r"[A-Za-z]", right))
-            if alpha_left > alpha_right:
-                artist, song = left, right
-            else:
-                artist, song = right, left
-            return (seconds, normalize_text(artist) or "N/A", normalize_text(song) or "N/A")
+    # 区切り：前後に空白がある記号/語のみ（ーは区切りとして扱わない）
+    # 対象: -, —, –, ―, －, /, ／, by, BY
+    msep = re.search(r"\s(-|—|–|―|－|/|／|by|BY)\s", info)
+    if msep:
+        left = info[:msep.start()].strip()
+        right = info[msep.end():].strip()
+        # ヒューリスティック：アルファベット多い方をアーティスト
+        alpha_left = len(re.findall(r"[A-Za-z]", left))
+        alpha_right = len(re.findall(r"[A-Za-z]", right))
+        if alpha_left > alpha_right:
+            artist, song = left, right
+        else:
+            artist, song = right, left
+        return (seconds, normalize_text(artist) or "N/A", normalize_text(song) or "N/A")
 
     # 区切りがない場合：全文を曲名扱い
     return (seconds, "N/A", normalize_text(info) or "N/A")
@@ -203,7 +203,7 @@ def generate_rows(u: str, ts: str) -> Tuple[List[List[str]], List[dict], List[st
     if not date_yyyymmdd and manual_date and re.fullmatch(r"\d{8}", manual_date):
         date_yyyymmdd = manual_date
 
-    # 表示名（公開日が取れた場合は先頭に付与）
+    # 表示名（公開日が取れた場合は先頭に付与: yyyymmdd+タイトル）
     if date_yyyymmdd:
         display_name = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{video_title}"
     else:
@@ -297,4 +297,4 @@ with c2:
 # ------------------------------
 with st.expander("👀 サンプル入力のヒント"):
     st.markdown("- URL例: `https://www.youtube.com/watch?v=dQw4w9WgXcQ`")
-    st.markdown("- 行書式: `MM:SS` または `HH:MM:SS` + 半角スペース + タイトル（区切り `-`, `/`, `by`, 引用「」 など）")
+    st.markdown("- 行書式: `MM:SS` または `HH:MM:SS` + 半角スペース + タイトル（区切り ` - `, ` / `, ` by ` など。伸ばし棒「ー」は区切り扱いしません）")
