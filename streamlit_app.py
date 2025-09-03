@@ -17,7 +17,7 @@ st.write(
 )
 
 # 表示名の区切りを「+」に固定（例: 20250101+My Video Title）
-DATE_TITLE_SEPARATOR = "+"
+DATE_TITLE_SEPARATOR = " "
 
 # ------------------------------
 # 入力UI
