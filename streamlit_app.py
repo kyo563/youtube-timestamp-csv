@@ -9,7 +9,7 @@ from typing import Tuple, List, Optional
 
 st.set_page_config(page_title="YouTubeタイムスタンプCSVジェネレーター", layout="centered")
 
-st.title("🎵 YouTubeタイムスタンプCSVジェネレーター")
+st.title("タイムスタンプCSVジェネレーター")
 st.write(
     "YouTube動画のURLとタイムスタンプリストからCSVを生成します。"
     "出力は **アーティスト名 / 楽曲名 / YouTubeリンク** の3列固定です。"
