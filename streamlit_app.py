@@ -46,10 +46,10 @@ manual_date = ""
 if not API_KEY:
     manual_date = st.text_input("公開日 (yyyymmdd) を手動指定（API未設定時に利用／任意）", placeholder="例: 20250101")
 
-# タイムスタンプ入力（重要：必ず st.session_state を使う）
-timestamps_widget = st.text_area(
+# タイムスタンプ入力（必ず session_state と同期）
+timestamps_input = st.text_area(
     "2. 楽曲リスト（タイムスタンプ付き）",
-    placeholder="例：\n0:35 楽曲名A - アーティスト名A\n6:23 楽曲名B / アーティスト名B\n1:10:05 アーティスト名C「楽曲名C」",
+    placeholder="例：\n0:35 楽曲名A - アーティスト名A\n6:23 楽曲名B/アーティスト名B\n1:10:05 アーティスト名C「楽曲名C」",
     height=220,
     key="timestamps_input",
 )
@@ -60,44 +60,39 @@ timestamps_widget = st.text_area(
 def fix_slash_spaces_in_timestamps(text: str) -> str:
     """
     タイムスタンプ行の「A/B」を「A / B」に整形します。
-    置換対象は各行のタイムスタンプ以降のみ。'//' は対象外。
+    置換対象は各行のタイムスタンプ以降のみ。'//' は除外します。
     """
     if not text:
         return text
-
-    lines_out = []
+    out_lines = []
     for raw in text.splitlines():
         m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", raw)
         if not m:
-            lines_out.append(raw)
+            out_lines.append(raw)
             continue
-
         ts = m.group(0)
-        rest = raw[len(ts):]  # タイムスタンプ以降のみ加工
-
-        # 全角スラッシュは半角へ
-        rest = rest.replace("／", "/")
-
-        # 両側に空白がない単独の "/" → " / "（'//' は対象外）
+        rest = raw[len(ts):]              # タイムスタンプ以降のみ対象
+        rest = rest.replace("／", "/")     # 全角→半角
+        # 両側が非空白の単独 "/" を「 / 」へ（'//' は除外）
         rest = re.sub(r'(?<=\S)/(?!/)(?=\S)', ' / ', rest)
-
         # 連続空白の圧縮＋前後トリム
         rest = re.sub(r'\s+', ' ', rest).strip()
-
-        # タイムスタンプと本文の間に最低1スペースを確保
+        # タイムスタンプ直後に最低1スペース
         if rest and not raw[len(ts):].startswith(' '):
             rest = ' ' + rest
+        out_lines.append(ts + rest)
+    return "\n".join(out_lines)
 
-        lines_out.append(ts + rest)
-
-    return "\n".join(lines_out)
-
-# 整形ボタン（必ず session_state を上書き）
-if st.button("「/」の左右にスペースを自動挿入", help="各行のタイムスタンプ以降で 'A/B' を 'A / B' に置換します（'//' は除外）"):
+# ▼任意適用：手動整形ボタン（押した時だけ反映）
+if st.button("「/」の左右にスペースを挿入（手動）",
+             help="各行のタイムスタンプ以降で 'A/B' を 'A / B' に置換します（'//' は除外）"):
     st.session_state["timestamps_input"] = fix_slash_spaces_in_timestamps(
         st.session_state.get("timestamps_input", "")
     )
-    st.success("スラッシュのスペース挿入を実行しました。")
+    st.success("整形しました。プレビューやCSV生成で反映されます。")
+
+# ▼任意適用：自動適用トグル（オンならプレビュー/CSV実行時に毎回適用）
+auto_fix = st.checkbox("プレビュー/CSV実行時にも自動で「/」→「 / 」整形を適用する", value=False)
 
 # ==============================
 # ユーティリティ：一般
@@ -114,13 +109,9 @@ def extract_video_id(u: str) -> Optional[str]:
         host = (pr.netloc or "").lower()
         path = pr.path or ""
         qs = urllib.parse.parse_qs(pr.query or "")
-
-        # https://youtu.be/<id>
         if "youtu.be" in host:
             seg = path.strip("/").split("/")
             return seg[0] if seg and seg[0] else None
-
-        # https://www.youtube.com/watch?v=<id> or /shorts/<id>
         if "youtube.com" in host:
             if "v" in qs and qs["v"]:
                 return qs["v"][0]
@@ -145,11 +136,9 @@ def parse_line(line: str) -> Tuple[Optional[int], Optional[str], Optional[str]]:
     m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", line)
     if not m:
         return (None, None, None)
-
     time_str = m.group(0)
     parts = list(map(int, time_str.split(":")))
     seconds = parts[0] * 3600 + parts[1] * 60 + parts[2] if len(parts) == 3 else parts[0] * 60 + parts[1]
-
     info = line[len(time_str):].strip()
 
     # 引用（「」/『』/“”/"）で曲名が囲まれているケース
@@ -342,6 +331,9 @@ c1, c2 = st.columns(2)
 with c1:
     if st.button("🔍 プレビュー表示"):
         timestamps_text = st.session_state.get("timestamps_input", "")
+        if auto_fix:
+            timestamps_text = fix_slash_spaces_in_timestamps(timestamps_text)
+
         if not url or not timestamps_text:
             st.error("URLと楽曲リストを入力してください。")
         elif not is_valid_youtube_url(url):
@@ -363,6 +355,9 @@ with c1:
 with c2:
     if st.button("📥 CSVファイルを生成"):
         timestamps_text = st.session_state.get("timestamps_input", "")
+        if auto_fix:
+            timestamps_text = fix_slash_spaces_in_timestamps(timestamps_text)
+
         if not url or not timestamps_text:
             st.error("URLと楽曲リストを入力してください。")
         elif not is_valid_youtube_url(url):
