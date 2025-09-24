@@ -22,18 +22,13 @@ st.write(
 
 # 表示名の区切り（例: 20250101 My Video Title）
 DATE_TITLE_SEPARATOR = " "
+# タイムゾーンは固定（UIに出さない）
+TZ_NAME = "Asia/Tokyo"
 
 # ==============================
 # 入力UI
 # ==============================
 url = st.text_input("1. YouTube動画のURL", placeholder="https://www.youtube.com/watch?v=xxxxxxxxxxx")
-
-tz_choice = st.selectbox(
-    "基準タイムゾーン（公開日 yyyymmdd 生成に使用）",
-    options=["Asia/Tokyo", "Asia/Kuala_Lumpur", "UTC"],
-    index=0,
-    help="YouTube APIのUTC時刻をこのタイムゾーンに変換して日付を作成します。",
-)
 
 # APIキー（Secrets優先、未設定なら任意入力）
 API_KEY = st.secrets.get("YT_API_KEY", "")
@@ -180,7 +175,7 @@ def fetch_video_title_from_oembed(watch_url: str) -> str:
     return "YouTube動画"
 
 # ==============================
-# 日付：ライブ/プレミア優先 + ローカルTZ変換
+# 日付：ライブ/プレミア優先 + ローカルTZ変換（TZ_NAMEで固定）
 # ==============================
 def _iso_utc_to_tz_yyyymmdd(iso_str: str, tz_name: str) -> Optional[str]:
     """ISO8601(UTC,'Z') → tz_name へ変換し yyyymmdd を返します。"""
@@ -340,7 +335,7 @@ with c1:
             st.error("有効なYouTube URLを入力してください。")
         else:
             try:
-                rows, preview, invalid, video_title = generate_rows(url, timestamps_text, tz_choice, API_KEY, manual_date)
+                rows, preview, invalid, video_title = generate_rows(url, timestamps_text, TZ_NAME, API_KEY, manual_date)
                 st.success(f"解析成功：{len(preview)}件。未解析：{len(invalid)}件。")
                 if preview:
                     import pandas as pd
@@ -364,7 +359,7 @@ with c2:
             st.error("有効なYouTube URLを入力してください。")
         else:
             try:
-                rows, preview, invalid, video_title = generate_rows(url, timestamps_text, tz_choice, API_KEY, manual_date)
+                rows, preview, invalid, video_title = generate_rows(url, timestamps_text, TZ_NAME, API_KEY, manual_date)
                 csv_content = to_csv(rows)
                 download_name = make_safe_filename(video_title, ".csv")
 
@@ -386,4 +381,4 @@ with c2:
 with st.expander("👀 サンプル入力のヒント"):
     st.markdown("- URL例: `https://www.youtube.com/watch?v=dQw4w9WgXcQ`")
     st.markdown("- 行書式: `MM:SS` または `HH:MM:SS` + 半角スペース + タイトル（区切り ` - `, ` / `, ` by ` など。伸ばし棒「ー」は区切り扱いしません）")
-    st.markdown("- 日付ソース優先度: **actualStartTime → scheduledStartTime → publishedAt → 手動**（すべてUTC→選択TZへ変換）。")
+    st.markdown("- 日付ソース優先度: **actualStartTime → scheduledStartTime → publishedAt → 手動**（UTC→Tokyoに変換）。")
