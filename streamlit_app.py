@@ -334,5 +334,4 @@ with c2:
 # ==============================
 with st.expander("👀 サンプル入力のヒント"):
     st.markdown("- URL例: `https://www.youtube.com/watch?v=dQw4w9WgXcQ`")
-    st.markdown("- 行書式: `MM:SS` または `HH:MM:SS` + 半角スペース + タイトル（区切り ` - `, ` / `, ` by ` など。伸ばし棒「ー」は区切り扱いしません）")
-    st.markdown("- 日付ソース優先度: **actualStartTime → scheduledStartTime → publishedAt → 手動**（UTC→Tokyoに変換）。")
+    st.markdown("- 行書式: `MM:SS` または `HH:MM:SS` + 半角スペース + タイトル（区切り ` - `, ` / `, ` by ` など")
