@@ -44,50 +44,10 @@ if not API_KEY:
 # タイムスタンプ入力（必ず session_state と同期）
 timestamps_input = st.text_area(
     "2. 楽曲リスト（タイムスタンプ付き）",
-    placeholder="例：\n0:35 楽曲名A - アーティスト名A\n6:23 楽曲名B/アーティスト名B\n1:10:05 アーティスト名C「楽曲名C」",
+    placeholder="例：\n0:35 楽曲名A - アーティスト名A\n6:23 楽曲名B / アーティスト名B\n1:10:05 アーティスト名C「楽曲名C」",
     height=220,
     key="timestamps_input",
 )
-
-# ==============================
-# ユーティリティ：整形（/ の左右にスペース）
-# ==============================
-def fix_slash_spaces_in_timestamps(text: str) -> str:
-    """
-    タイムスタンプ行の「A/B」を「A / B」に整形します。
-    置換対象は各行のタイムスタンプ以降のみ。'//' は除外します。
-    """
-    if not text:
-        return text
-    out_lines = []
-    for raw in text.splitlines():
-        m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", raw)
-        if not m:
-            out_lines.append(raw)
-            continue
-        ts = m.group(0)
-        rest = raw[len(ts):]              # タイムスタンプ以降のみ対象
-        rest = rest.replace("／", "/")     # 全角→半角
-        # 両側が非空白の単独 "/" を「 / 」へ（'//' は除外）
-        rest = re.sub(r'(?<=\S)/(?!/)(?=\S)', ' / ', rest)
-        # 連続空白の圧縮＋前後トリム
-        rest = re.sub(r'\s+', ' ', rest).strip()
-        # タイムスタンプ直後に最低1スペース
-        if rest and not raw[len(ts):].startswith(' '):
-            rest = ' ' + rest
-        out_lines.append(ts + rest)
-    return "\n".join(out_lines)
-
-# ▼任意適用：手動整形ボタン（押した時だけ反映）
-if st.button("「/」の左右にスペースを挿入（手動）",
-             help="各行のタイムスタンプ以降で 'A/B' を 'A / B' に置換します（'//' は除外）"):
-    st.session_state["timestamps_input"] = fix_slash_spaces_in_timestamps(
-        st.session_state.get("timestamps_input", "")
-    )
-    st.success("整形しました。プレビューやCSV生成で反映されます。")
-
-# ▼任意適用：自動適用トグル（オンならプレビュー/CSV実行時に毎回適用）
-auto_fix = st.checkbox("プレビュー/CSV実行時にも自動で「/」→「 / 」整形を適用する", value=False)
 
 # ==============================
 # ユーティリティ：一般
@@ -326,9 +286,6 @@ c1, c2 = st.columns(2)
 with c1:
     if st.button("🔍 プレビュー表示"):
         timestamps_text = st.session_state.get("timestamps_input", "")
-        if auto_fix:
-            timestamps_text = fix_slash_spaces_in_timestamps(timestamps_text)
-
         if not url or not timestamps_text:
             st.error("URLと楽曲リストを入力してください。")
         elif not is_valid_youtube_url(url):
@@ -350,9 +307,6 @@ with c1:
 with c2:
     if st.button("📥 CSVファイルを生成"):
         timestamps_text = st.session_state.get("timestamps_input", "")
-        if auto_fix:
-            timestamps_text = fix_slash_spaces_in_timestamps(timestamps_text)
-
         if not url or not timestamps_text:
             st.error("URLと楽曲リストを入力してください。")
         elif not is_valid_youtube_url(url):
