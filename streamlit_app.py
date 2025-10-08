@@ -30,10 +30,6 @@ TZ_NAME = "Asia/Tokyo"
 # ==============================
 url = st.text_input("1. YouTube動画のURL", placeholder="https://www.youtube.com/watch?v=xxxxxxxxxxx")
 
-# 左右反転スイッチ（説明は不要とのことなのでラベルのみ）
-# ※ Streamlit 1.27+ の st.toggle を使用。古い環境では st.checkbox("左右反転") に置き換えてください。
-flip = st.toggle("左右反転", value=False)
-
 # APIキー（Secrets優先、未設定なら任意入力）
 API_KEY = st.secrets.get("YT_API_KEY", "")
 if not API_KEY:
@@ -48,7 +44,7 @@ if not API_KEY:
 # タイムスタンプ入力（必ず session_state と同期）
 timestamps_input = st.text_area(
     "2. 楽曲リスト（タイムスタンプ付き）",
-    placeholder="例：\n0:35 楽曲名A - アーティスト名A\n6:23 楽曲名B / アーティスト名B\n1:10:05 アーティスト名C 「楽曲名C」",
+    placeholder="例：\n0:35 曲名A / アーティスト名A\n6:23 曲名B - アーティスト名B\n1:10:05 曲名C by アーティスト名C",
     height=220,
     key="timestamps_input",
 )
@@ -95,8 +91,8 @@ def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Opt
     仕様:
       - 引用補助・自動推定は一切なし。
       - 区切り記号（- — – ― － / ／ by BY）で左右に分割。
-      - flip=False のとき 左=アーティスト / 右=曲名（基本）
-        flip=True のとき 左右を反転（左=曲名 / 右=アーティスト）
+      - デフォルト（flip=False）は 右=アーティスト / 左=曲名。
+        flip=True のとき左右反転（左=アーティスト / 右=曲名）。
       - 区切りが無い行は全文を曲名扱い（アーティスト "N/A"）
     """
     m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", line)
@@ -113,9 +109,11 @@ def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Opt
         left  = normalize_text(info[:msep.start()].strip())
         right = normalize_text(info[msep.end():].strip())
         if not flip:
-            artist, song = left or "N/A", right or "N/A"
-        else:
+            # デフォルト：右→左（右=アーティスト、左=曲名）
             artist, song = right or "N/A", left or "N/A"
+        else:
+            # 反転：左→右（左=アーティスト、右=曲名）
+            artist, song = left or "N/A", right or "N/A"
         return (seconds, artist, song)
 
     # 区切りがない場合：全文を曲名扱い
@@ -283,8 +281,12 @@ def generate_rows(u: str, timestamps_text: str, tz_name: str, api_key: str, manu
 c1, c2 = st.columns(2)
 
 with c1:
+    # ★ プレビュー付近に左右反転スイッチを配置（デフォルトOFF）
+    st.toggle("左右反転", value=False, key="flip")
+
     if st.button("🔍 プレビュー表示"):
         timestamps_text = st.session_state.get("timestamps_input", "")
+        flip = st.session_state.get("flip", False)  # 右→左（右=アーティスト）を既定、ONで左右反転
         if not url or not timestamps_text:
             st.error("URLと楽曲リストを入力してください。")
         elif not is_valid_youtube_url(url):
@@ -306,6 +308,7 @@ with c1:
 with c2:
     if st.button("📥 CSVファイルを生成"):
         timestamps_text = st.session_state.get("timestamps_input", "")
+        flip = st.session_state.get("flip", False)
         if not url or not timestamps_text:
             st.error("URLと楽曲リストを入力してください。")
         elif not is_valid_youtube_url(url):
