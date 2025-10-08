@@ -16,6 +16,8 @@ st.set_page_config(page_title="タイムスタンプCSVジェネレーター", l
 st.title("タイムスタンプCSVジェネレーター")
 st.write(
     "YouTube動画のURLとタイムスタンプリストからCSVを生成します。"
+    "出力は **アーティスト名 / 楽曲名 / YouTubeリンク** の3列固定です。"
+    "リンク列の表示名は **公開日(yyyymmdd) + 動画タイトル** です（APIキー未設定時は手動入力可）。"
 )
 
 # 表示名の区切り（例: 20250101 My Video Title）
@@ -28,13 +30,9 @@ TZ_NAME = "Asia/Tokyo"
 # ==============================
 url = st.text_input("1. YouTube動画のURL", placeholder="https://www.youtube.com/watch?v=xxxxxxxxxxx")
 
-# 入力の並び（固定割当）
-sep_mode = st.radio(
-    "入力の並びを固定します（区切り記号で左右に分かれた場合の割当）",
-    ["左=アーティスト / 右=曲名", "左=曲名 / 右=アーティスト"],
-    index=0,
-    horizontal=True,
-)
+# 左右反転スイッチ（説明は不要とのことなのでラベルのみ）
+# ※ Streamlit 1.27+ の st.toggle を使用。古い環境では st.checkbox("左右反転") に置き換えてください。
+flip = st.toggle("左右反転", value=False)
 
 # APIキー（Secrets優先、未設定なら任意入力）
 API_KEY = st.secrets.get("YT_API_KEY", "")
@@ -50,7 +48,7 @@ if not API_KEY:
 # タイムスタンプ入力（必ず session_state と同期）
 timestamps_input = st.text_area(
     "2. 楽曲リスト（タイムスタンプ付き）",
-    placeholder="例：\n0:35 楽曲名A - アーティスト名A\n6:23 楽曲名B / アーティスト名B\n1:10:05 アーティスト名C「楽曲名C」",
+    placeholder="例：\n0:35 楽曲名A - アーティスト名A\n6:23 楽曲名B / アーティスト名B\n1:10:05 アーティスト名C 「楽曲名C」",
     height=220,
     key="timestamps_input",
 )
@@ -89,11 +87,17 @@ def normalize_text(s: str) -> str:
     s = s.replace("　", " ").strip()  # 全角スペース→半角
     return re.sub(r"\s+", " ", s)     # 連続空白を1つに
 
-def parse_line(line: str, sep_mode: str) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Optional[str]]:
     """
     先頭のタイムスタンプを読み取り、(seconds, artist, song) を返します。
     解析不可なら (None, None, None) を返します。
-    引用補助は完全無効化し、常に「左右のみ」で割当します。
+
+    仕様:
+      - 引用補助・自動推定は一切なし。
+      - 区切り記号（- — – ― － / ／ by BY）で左右に分割。
+      - flip=False のとき 左=アーティスト / 右=曲名（基本）
+        flip=True のとき 左右を反転（左=曲名 / 右=アーティスト）
+      - 区切りが無い行は全文を曲名扱い（アーティスト "N/A"）
     """
     m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", line)
     if not m:
@@ -108,13 +112,13 @@ def parse_line(line: str, sep_mode: str) -> Tuple[Optional[int], Optional[str], 
     if msep:
         left  = normalize_text(info[:msep.start()].strip())
         right = normalize_text(info[msep.end():].strip())
-        if sep_mode == "左=アーティスト / 右=曲名":
+        if not flip:
             artist, song = left or "N/A", right or "N/A"
-        else:  # 左=曲名 / 右=アーティスト
+        else:
             artist, song = right or "N/A", left or "N/A"
         return (seconds, artist, song)
 
-    # 区切りがない場合：全文を曲名扱い（アーティストはN/A）
+    # 区切りがない場合：全文を曲名扱い
     return (seconds, "N/A", normalize_text(info) or "N/A")
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -217,7 +221,7 @@ def to_csv(rows: List[List[str]]) -> str:
 # ==============================
 # 主処理（プレビュー／CSVで共通利用）
 # ==============================
-def generate_rows(u: str, timestamps_text: str, tz_name: str, api_key: str, manual_yyyymmdd: str, sep_mode: str) -> Tuple[List[List[str]], List[dict], List[str], str]:
+def generate_rows(u: str, timestamps_text: str, tz_name: str, api_key: str, manual_yyyymmdd: str, flip: bool) -> Tuple[List[List[str]], List[dict], List[str], str]:
     """入力テキストを解析し、CSV行・プレビュー行・未解析行・動画タイトルを返します。"""
     vid = extract_video_id(u)
     if not vid:
@@ -251,7 +255,7 @@ def generate_rows(u: str, timestamps_text: str, tz_name: str, api_key: str, manu
         line = normalize_text(raw)
         if not line:
             continue
-        sec, artist, song = parse_line(line, sep_mode)
+        sec, artist, song = parse_line(line, flip)
         if sec is None:
             invalid_lines.append(raw)
             continue
@@ -287,7 +291,7 @@ with c1:
             st.error("有効なYouTube URLを入力してください。")
         else:
             try:
-                rows, preview, invalid, video_title = generate_rows(url, timestamps_text, TZ_NAME, API_KEY, manual_date, sep_mode)
+                rows, preview, invalid, video_title = generate_rows(url, timestamps_text, TZ_NAME, API_KEY, manual_date, flip)
                 st.success(f"解析成功：{len(preview)}件。未解析：{len(invalid)}件。")
                 if preview:
                     import pandas as pd
@@ -308,7 +312,7 @@ with c2:
             st.error("有効なYouTube URLを入力してください。")
         else:
             try:
-                rows, preview, invalid, video_title = generate_rows(url, timestamps_text, TZ_NAME, API_KEY, manual_date, sep_mode)
+                rows, preview, invalid, video_title = generate_rows(url, timestamps_text, TZ_NAME, API_KEY, manual_date, flip)
                 csv_content = to_csv(rows)
                 download_name = make_safe_filename(video_title, ".csv")
 
@@ -327,5 +331,6 @@ with c2:
 # ==============================
 # ヘルプ
 # ==============================
-with st.expander("サンプル入力のヒント"):
+with st.expander("👀 サンプル入力のヒント"):
+    st.markdown("- URL例: `https://www.youtube.com/watch?v=dQw4w9WgXcQ`")
     st.markdown("- 行書式: `MM:SS` または `HH:MM:SS` + 半角スペース + タイトル（区切り ` - `, ` / `, ` by ` など）")
