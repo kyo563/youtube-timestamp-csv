@@ -16,8 +16,6 @@ st.set_page_config(page_title="タイムスタンプCSVジェネレーター", l
 st.title("タイムスタンプCSVジェネレーター")
 st.write(
     "YouTube動画のURLとタイムスタンプリストからCSVを生成します。"
-    "出力は **アーティスト名 / 楽曲名 / YouTubeリンク** の3列固定です。"
-    "リンク列の表示名は **公開日(yyyymmdd) + 動画タイトル** です（APIキー未設定時は手動入力可）。"
 )
 
 # 表示名の区切り（例: 20250101 My Video Title）
