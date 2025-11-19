@@ -7,6 +7,7 @@ import urllib.parse
 from datetime import datetime, timezone
 from typing import Tuple, List, Optional, Dict
 from zoneinfo import ZoneInfo
+import unicodedata  # 手動日付入力の正規化で使用
 
 # ==============================
 # 基本設定
@@ -34,10 +35,15 @@ if not API_KEY:
     with st.expander("YouTube APIキー（任意。未設定でも手動で公開日を指定できます）"):
         API_KEY = st.text_input("YT_API_KEY", type="password")
 
-# API未使用時の手動公開日（8桁）
-manual_date = ""
+# API未使用時の手動公開日（柔軟入力 → yyyymmdd に正規化）
+manual_date: str = ""       # 正規化後の yyyymmdd
+manual_date_raw: str = ""   # ユーザー入力そのもの
+
 if not API_KEY:
-    manual_date = st.text_input("公開日 (yyyymmdd) を手動指定（API未設定時に利用／任意）", placeholder="例: 20250101")
+    manual_date_raw = st.text_input(
+        "公開日を手動指定（API未設定時に利用／任意）",
+        placeholder="例: 2025/11/19, 11/19, 3月20日 など"
+    )
 
 # タイムスタンプ入力（必ず session_state と同期）
 timestamps_input = st.text_area(
@@ -81,6 +87,68 @@ def normalize_text(s: str) -> str:
     s = s.replace("　", " ").strip()  # 全角スペース→半角
     return re.sub(r"\s+", " ", s)     # 連続空白を1つに
 
+def normalize_manual_date_input(raw: str, tz_name: str) -> Optional[str]:
+    """
+    手動入力された日付文字列を yyyymmdd に正規化して返します。
+
+    サポート例:
+      - "20250101"
+      - "2025/01/01", "2025-1-1", "2025.1.1"
+      - "2025年1月1日"
+      - "11/19", "11-19", "11 19", "11月19日"  → {今年}1119
+      - "3/20", "3月20日", "０３月０５日"      → {今年}0320 / {今年}0305
+
+    年が省略されている場合は tz_name の現在年を補完します。
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+
+    # 全角→半角（数字・スラッシュなど）
+    s = unicodedata.normalize("NFKC", s)
+
+    # 日本語の年/月/日を / に統一
+    s = s.replace("年", "/").replace("月", "/").replace("日", "")
+
+    # ., - と空白を / に統一
+    s = re.sub(r"[.\-]", "/", s)
+    s = re.sub(r"\s+", "/", s)
+    s = s.strip("/")
+
+    # パターン1: すでに8桁数字（yyyymmdd）
+    if re.fullmatch(r"\d{8}", s):
+        y, m, d = int(s[0:4]), int(s[4:6]), int(s[6:8])
+    else:
+        parts = s.split("/")
+        if len(parts) == 3:
+            # 2025/3/20 など
+            try:
+                y, m, d = map(int, parts)
+            except ValueError:
+                return None
+        elif len(parts) == 2:
+            # 11/19, 3/20 など → 年は現在年
+            today = datetime.now(ZoneInfo(tz_name)).date()
+            y = today.year
+            try:
+                m, d = map(int, parts)
+            except ValueError:
+                return None
+        else:
+            return None
+
+    # 2桁年が来た場合は 2000年代として扱う（任意仕様）
+    if y < 100:
+        y += 2000
+
+    try:
+        dt = datetime(y, m, d)
+    except ValueError:
+        # 存在しない日付なら None
+        return None
+
+    return dt.strftime("%Y%m%d")
+
 def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Optional[str]]:
     """
     先頭のタイムスタンプを読み取り、(seconds, artist, song) を返します。
@@ -98,7 +166,10 @@ def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Opt
         return (None, None, None)
     time_str = m.group(0)
     parts = list(map(int, time_str.split(":")))
-    seconds = parts[0] * 3600 + parts[1] * 60 + parts[2] if len(parts) == 3 else parts[0] * 60 + parts[1]
+    if len(parts) == 3:
+        seconds = parts[0] * 3600 + parts[1] * 60 + parts[2]
+    else:
+        seconds = parts[0] * 60 + parts[1]
     info = line[len(time_str):].strip()
 
     # 区切り（ーは除外）。対象: -, —, –, ―, －, /, ／, by, BY
@@ -133,11 +204,15 @@ def fetch_video_title_from_oembed(watch_url: str) -> str:
 # 日付：ライブ/プレミア優先 + ローカルTZ変換（TZ_NAMEで固定）
 # ==============================
 def _iso_utc_to_tz_yyyymmdd(iso_str: str, tz_name: str) -> Optional[str]:
-    """ISO8601(UTC,'Z') → tz_name へ変換し yyyymmdd を返します。"""
+    """ISO8601(UTC, 'Z' または 'Z+小数') → tz_name へ変換し yyyymmdd を返します。"""
     if not iso_str:
         return None
     try:
-        dt_utc = datetime.strptime(iso_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        s = iso_str
+        # YouTubeは "2024-01-01T00:00:00Z" or "2024-01-01T00:00:00.123Z" 形式
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt_utc = datetime.fromisoformat(s)  # 小数秒付きも対応
         dt_local = dt_utc.astimezone(ZoneInfo(tz_name))
         return dt_local.strftime("%Y%m%d")
     except Exception:
@@ -150,7 +225,7 @@ def fetch_best_display_date_and_sources(video_id: str, api_key: str, tz_name: st
     優先順位: actualStartTime → scheduledStartTime → publishedAt。
     それぞれを tz_name へ変換した yyyymmdd と採用ソースを返す。
     """
-    result = {
+    result: Dict[str, Optional[str]] = {
         "chosen_yyyymmdd": None,
         "source": None,  # "actualStartTime" | "scheduledStartTime" | "publishedAt" | "manual"
     }
@@ -217,7 +292,14 @@ def to_csv(rows: List[List[str]]) -> str:
 # ==============================
 # 主処理（プレビュー／CSVで共通利用）
 # ==============================
-def generate_rows(u: str, timestamps_text: str, tz_name: str, api_key: str, manual_yyyymmdd: str, flip: bool) -> Tuple[List[List[str]], List[dict], List[str], str]:
+def generate_rows(
+    u: str,
+    timestamps_text: str,
+    tz_name: str,
+    api_key: str,
+    manual_yyyymmdd: str,
+    flip: bool
+) -> Tuple[List[List[str]], List[dict], List[str], str]:
     """入力テキストを解析し、CSV行・プレビュー行・未解析行・動画タイトルを返します。"""
     vid = extract_video_id(u)
     if not vid:
@@ -228,7 +310,7 @@ def generate_rows(u: str, timestamps_text: str, tz_name: str, api_key: str, manu
     video_title = fetch_video_title_from_oembed(base_watch)
 
     # 日付（ライブ/プレミア優先 + ローカルTZ変換）
-    date_info = {"chosen_yyyymmdd": None, "source": None}
+    date_info: Dict[str, Optional[str]] = {"chosen_yyyymmdd": None, "source": None}
     if api_key:
         date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
 
@@ -274,6 +356,18 @@ def generate_rows(u: str, timestamps_text: str, tz_name: str, api_key: str, manu
     return rows, parsed_preview, invalid_lines, video_title
 
 # ==============================
+# 手動日付入力の正規化（UI上で解釈結果を表示）
+# ==============================
+if not API_KEY and manual_date_raw:
+    normalized = normalize_manual_date_input(manual_date_raw, TZ_NAME)
+    if normalized:
+        manual_date = normalized
+        st.caption(f"解釈された公開日: {manual_date}")
+    else:
+        manual_date = ""
+        st.error("日付として解釈できませんでした。例: 2025/11/19, 11/19, 3月20日 などの形式で入力してください。")
+
+# ==============================
 # ボタン群（どちらも session_state を使用）
 # ==============================
 c1, c2 = st.columns(2)
@@ -291,7 +385,9 @@ with c1:
             st.error("有効なYouTube URLを入力してください。")
         else:
             try:
-                rows, preview, invalid, video_title = generate_rows(url, timestamps_text, TZ_NAME, API_KEY, manual_date, flip)
+                rows, preview, invalid, video_title = generate_rows(
+                    url, timestamps_text, TZ_NAME, API_KEY, manual_date, flip
+                )
                 st.success(f"解析成功：{len(preview)}件。未解析：{len(invalid)}件。")
                 if preview:
                     import pandas as pd
@@ -313,7 +409,9 @@ with c2:
             st.error("有効なYouTube URLを入力してください。")
         else:
             try:
-                rows, preview, invalid, video_title = generate_rows(url, timestamps_text, TZ_NAME, API_KEY, manual_date, flip)
+                rows, preview, invalid, video_title = generate_rows(
+                    url, timestamps_text, TZ_NAME, API_KEY, manual_date, flip
+                )
                 csv_content = to_csv(rows)
                 download_name = make_safe_filename(video_title, ".csv")
 
