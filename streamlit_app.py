@@ -7,7 +7,8 @@ import urllib.parse
 from datetime import datetime, timezone
 from typing import Tuple, List, Optional, Dict
 from zoneinfo import ZoneInfo
-import unicodedata  # 手動日付入力の正規化で使用
+import unicodedata
+import pandas as pd
 
 # ==============================
 # 基本設定
@@ -21,7 +22,7 @@ st.write(
 
 # 表示名の区切り（例: 20250101 My Video Title）
 DATE_TITLE_SEPARATOR = " "
-# タイムゾーンは固定（UIに出さない）
+# タイムゾーンは固定
 TZ_NAME = "Asia/Tokyo"
 
 # ==============================
@@ -36,8 +37,8 @@ if not API_KEY:
         API_KEY = st.text_input("YT_API_KEY", type="password")
 
 # API未使用時の手動公開日（柔軟入力 → yyyymmdd に正規化）
-manual_date: str = ""       # 正規化後の yyyymmdd
-manual_date_raw: str = ""   # ユーザー入力そのもの
+manual_date_raw: str = ""
+manual_date: str = ""
 
 if not API_KEY:
     manual_date_raw = st.text_input(
@@ -137,7 +138,7 @@ def normalize_manual_date_input(raw: str, tz_name: str) -> Optional[str]:
         else:
             return None
 
-    # 2桁年が来た場合は 2000年代として扱う（任意仕様）
+    # 2桁年が来た場合は 2000年代として扱う
     if y < 100:
         y += 2000
 
@@ -190,7 +191,7 @@ def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Opt
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_video_title_from_oembed(watch_url: str) -> str:
-    """oEmbedで動画タイトルを取得（APIキー不要）。失敗時は既定名。"""
+    """oEmbedで動画タイトルを取得（APIキー不要）。失敗時は既定名です。"""
     try:
         r = requests.get("https://www.youtube.com/oembed", params={"url": watch_url, "format": "json"}, timeout=6)
         if r.status_code == 200:
@@ -209,7 +210,7 @@ def _iso_utc_to_tz_yyyymmdd(iso_str: str, tz_name: str) -> Optional[str]:
         return None
     try:
         s = iso_str
-        # YouTubeは "2024-01-01T00:00:00Z" or "2024-01-01T00:00:00.123Z" 形式
+        # YouTubeは "2024-01-01T00:00:00Z" or "2024-01-01T00:00:00.123Z" 形式です。
         if s.endswith("Z"):
             s = s[:-1] + "+00:00"
         dt_utc = datetime.fromisoformat(s)  # 小数秒付きも対応
@@ -223,7 +224,7 @@ def fetch_best_display_date_and_sources(video_id: str, api_key: str, tz_name: st
     """
     videos?part=snippet,liveStreamingDetails を取得。
     優先順位: actualStartTime → scheduledStartTime → publishedAt。
-    それぞれを tz_name へ変換した yyyymmdd と採用ソースを返す。
+    それぞれを tz_name へ変換した yyyymmdd と採用ソースを返します。
     """
     result: Dict[str, Optional[str]] = {
         "chosen_yyyymmdd": None,
@@ -271,12 +272,12 @@ def fetch_best_display_date_and_sources(video_id: str, api_key: str, tz_name: st
 # CSV関連ユーティリティ
 # ==============================
 def make_hyperlink_formula(url_: str, display_text: str) -> str:
-    """Excel用 HYPERLINK 関数文字列。"""
+    """Excel用 HYPERLINK 関数文字列です。"""
     safe = (display_text or "").replace('"', '""')
     return f'=HYPERLINK("{url_}","{safe}")'
 
 def make_safe_filename(name: str, ext: str = ".csv") -> str:
-    """ファイル名サニタイズ + 長さ制限。"""
+    """ファイル名サニタイズ + 長さ制限です。"""
     name = re.sub(r'[\\/:*?"<>|\x00-\x1F]', "_", name or "").strip().strip(".")
     if not name:
         name = "youtube_song_list"
@@ -368,64 +369,94 @@ if not API_KEY and manual_date_raw:
         st.error("日付として解釈できませんでした。例: 2025/11/19, 11/19, 3月20日 などの形式で入力してください。")
 
 # ==============================
-# ボタン群（どちらも session_state を使用）
+# ボタン群（結果は session_state に格納）
 # ==============================
 c1, c2 = st.columns(2)
 
 with c1:
-    # ★ プレビュー付近に左右反転スイッチを配置（デフォルトOFF）
+    # 左右反転スイッチ（デフォルトOFF）
     st.toggle("左右反転", value=False, key="flip")
-
-    if st.button("🔍 プレビュー表示"):
-        timestamps_text = st.session_state.get("timestamps_input", "")
-        flip = st.session_state.get("flip", False)  # 右→左（右=アーティスト）を既定、ONで左右反転
-        if not url or not timestamps_text:
-            st.error("URLと楽曲リストを入力してください。")
-        elif not is_valid_youtube_url(url):
-            st.error("有効なYouTube URLを入力してください。")
-        else:
-            try:
-                rows, preview, invalid, video_title = generate_rows(
-                    url, timestamps_text, TZ_NAME, API_KEY, manual_date, flip
-                )
-                st.success(f"解析成功：{len(preview)}件。未解析：{len(invalid)}件。")
-                if preview:
-                    import pandas as pd
-                    st.dataframe(pd.DataFrame(preview), use_container_width=True)
-                st.caption(f"動画タイトル：{video_title}")
-                if invalid:
-                    with st.expander("未解析行の一覧"):
-                        st.code("\n".join(invalid))
-            except Exception as e:
-                st.error(f"エラー: {e}")
+    preview_clicked = st.button("🔍 プレビュー表示")
 
 with c2:
-    if st.button("📥 CSVファイルを生成"):
-        timestamps_text = st.session_state.get("timestamps_input", "")
-        flip = st.session_state.get("flip", False)
-        if not url or not timestamps_text:
-            st.error("URLと楽曲リストを入力してください。")
-        elif not is_valid_youtube_url(url):
-            st.error("有効なYouTube URLを入力してください。")
-        else:
-            try:
-                rows, preview, invalid, video_title = generate_rows(
-                    url, timestamps_text, TZ_NAME, API_KEY, manual_date, flip
-                )
-                csv_content = to_csv(rows)
-                download_name = make_safe_filename(video_title, ".csv")
+    csv_clicked = st.button("📥 CSVファイルを生成")
 
-                st.success("CSVファイルを生成しました。下のボタンからダウンロードできます。")
-                st.download_button(
-                    label="CSVをダウンロード",
-                    data=csv_content.encode("utf-8-sig"),  # BOM付きUTF-8（Excel互換）
-                    file_name=download_name,
-                    mime="text/csv"
-                )
-                if invalid:
-                    st.info(f"未解析行：{len(invalid)}件。入力の書式を確認してください。")
-            except Exception as e:
-                st.error(f"エラー: {e}")
+# プレビュー生成
+if preview_clicked:
+    timestamps_text = st.session_state.get("timestamps_input", "")
+    flip = st.session_state.get("flip", False)
+
+    if not url or not timestamps_text:
+        st.error("URLと楽曲リストを入力してください。")
+    elif not is_valid_youtube_url(url):
+        st.error("有効なYouTube URLを入力してください。")
+    else:
+        try:
+            rows, preview, invalid, video_title = generate_rows(
+                url, timestamps_text, TZ_NAME, API_KEY, manual_date, flip
+            )
+            st.session_state["preview_df"] = preview
+            st.session_state["preview_invalid"] = invalid
+            st.session_state["preview_title"] = video_title
+            st.success(f"解析成功：{len(preview)}件。未解析：{len(invalid)}件。下部にプレビューを表示しました。")
+        except Exception as e:
+            st.error(f"エラー: {e}")
+
+# CSV生成
+if csv_clicked:
+    timestamps_text = st.session_state.get("timestamps_input", "")
+    flip = st.session_state.get("flip", False)
+    if not url or not timestamps_text:
+        st.error("URLと楽曲リストを入力してください。")
+    elif not is_valid_youtube_url(url):
+        st.error("有効なYouTube URLを入力してください。")
+    else:
+        try:
+            rows, preview, invalid, video_title = generate_rows(
+                url, timestamps_text, TZ_NAME, API_KEY, manual_date, flip
+            )
+            csv_content = to_csv(rows)
+            download_name = make_safe_filename(video_title, ".csv")
+
+            st.success("CSVファイルを生成しました。下のボタンからダウンロードできます。")
+            st.download_button(
+                label="CSVをダウンロード",
+                data=csv_content.encode("utf-8-sig"),  # BOM付きUTF-8（Excel互換）
+                file_name=download_name,
+                mime="text/csv"
+            )
+            if invalid:
+                st.info(f"未解析行：{len(invalid)}件。入力の書式を確認してください。")
+        except Exception as e:
+            st.error(f"エラー: {e}")
+
+# ==============================
+# プレビュー表示（カラムの外で全幅表示）
+# ==============================
+if "preview_df" in st.session_state:
+    st.subheader("プレビュー")
+
+    df = pd.DataFrame(st.session_state["preview_df"])
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        column_config={
+            "time_seconds": st.column_config.NumberColumn("秒数", width="small"),
+            "artist": st.column_config.TextColumn("アーティスト名", width="medium"),
+            "song": st.column_config.TextColumn("楽曲名", width="large"),
+            "display_name": st.column_config.TextColumn("リンク表示名", width="large"),
+            "date_source": st.column_config.TextColumn("日付ソース", width="small"),
+            "hyperlink_formula": st.column_config.TextColumn("Excel用リンク式", width="large"),
+        },
+    )
+
+    st.caption(f"動画タイトル：{st.session_state.get('preview_title', '')}")
+
+    invalid_lines = st.session_state.get("preview_invalid", [])
+    if invalid_lines:
+        with st.expander("未解析行の一覧"):
+            st.code("\n".join(invalid_lines))
 
 # ==============================
 # ヘルプ
