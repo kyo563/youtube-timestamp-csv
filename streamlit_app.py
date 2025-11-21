@@ -13,10 +13,10 @@ import pandas as pd
 # ==============================
 # 基本設定
 # ==============================
-st.set_page_config(page_title="YouTube CSVツール", layout="centered")
+st.set_page_config(page_title="タイムスタンプCSV出力", layout="centered")
 
 st.title("YouTube CSVツール")
-st.write("タイムスタンプCSV生成とショート動画CSV生成の2機能をタブで提供します。")
+st.write("タイムスタンプCSV生成とショート動画CSV生成")
 
 # 表示名の区切り（例: 20250101 My Video Title）
 DATE_TITLE_SEPARATOR = " "
