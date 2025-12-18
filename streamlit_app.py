@@ -34,11 +34,21 @@ def resolve_api_key(
     expander_label: str,
     input_label: str = "YT_API_KEY",
 ) -> str:
-    api_key = default_key
+    shared_key = st.session_state.get("shared_api_key", "") or ""
+    api_key = shared_key or default_key
+
+    if default_key and not shared_key:
+        st.session_state["shared_api_key"] = default_key
+
     if not api_key:
         with st.expander(expander_label):
             api_key = st.text_input(input_label, type="password", key=input_state_key)
-    return api_key or ""
+
+    api_key = api_key or ""
+    if api_key and api_key != shared_key:
+        st.session_state["shared_api_key"] = api_key
+
+    return api_key
 
 
 def yt_get_json(path: str, params: Dict, timeout: int = 10) -> Optional[dict]:
@@ -901,7 +911,7 @@ with tab1:
     api_key_ts = resolve_api_key(
         default_key=GLOBAL_API_KEY,
         input_state_key="ts_api_key",
-        expander_label="YouTube APIキー（任意。未設定でも手動で公開日を指定できます）※コメント自動取得はAPIキー必須",
+        expander_label="YouTube APIキー（任意）",
     )
 
     st.markdown("### 入力方式")
