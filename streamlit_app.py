@@ -115,6 +115,18 @@ def extract_video_id(u: str) -> Optional[str]:
         return None
 
 
+def extract_playlist_id(u: str) -> Optional[str]:
+    if not u:
+        return None
+    try:
+        pr = urllib.parse.urlparse(u)
+        qs = urllib.parse.parse_qs(pr.query or "")
+        vals = qs.get("list") or []
+        return vals[0] if vals and vals[0] else None
+    except Exception:
+        return None
+
+
 def normalize_manual_date_input(raw: str, tz_name: str) -> Optional[str]:
     s = (raw or "").strip()
     if not s:
@@ -744,6 +756,41 @@ def scrape_shorts_ids_from_web(url: str, limit: int = 50) -> List[str]:
 # タブ3：最新動画一覧 → CSV（改）
 # ==============================
 @st.cache_data(show_spinner=False, ttl=600)
+def list_playlist_video_ids(playlist_id: str, api_key: str, limit: int) -> List[str]:
+    ids: List[str] = []
+    token = None
+    seen = set()
+
+    while len(ids) < limit:
+        params = {
+            "part": "contentDetails",
+            "playlistId": playlist_id,
+            "maxResults": 50,
+            "key": api_key,
+        }
+        if token:
+            params["pageToken"] = token
+
+        data = yt_get_json("playlistItems", params, timeout=10)
+        if not data:
+            break
+
+        for it in data.get("items", []):
+            vid = (it.get("contentDetails", {}) or {}).get("videoId")
+            if vid and vid not in seen:
+                seen.add(vid)
+                ids.append(vid)
+                if len(ids) >= limit:
+                    break
+
+        token = data.get("nextPageToken")
+        if not token:
+            break
+
+    return ids[:limit]
+
+
+@st.cache_data(show_spinner=False, ttl=600)
 def list_latest_video_ids_mixed(channel_id: str, api_key: str, limit: int) -> List[str]:
     ids: List[str] = []
     token = None
@@ -1181,15 +1228,31 @@ with tab2:
 with tab3:
     st.subheader("最新動画（動画/ショート/ライブ）→CSV（改）")
     st.write(
-        "チャンネルの最新n件について、**動画タイトル / 動画URL / 公開日(yyyymmdd)** をCSV出力します。"
-        "取得は **search.list(order=date) → videos.list** のみで完結します。"
+        "チャンネルの最新n件、またはプレイリスト内の動画について、**動画タイトル / 動画URL / 公開日(yyyymmdd)** をCSV出力します。"
+        "取得は **search.list(order=date) / playlistItems.list → videos.list** のみで完結します。"
     )
 
-    latest_channel_url = st.text_input(
-        "チャンネルのURL（/channel/UC… または /@handle）",
-        placeholder="https://www.youtube.com/@Google",
-        key="latest_channel_url",
+    latest_mode = st.radio(
+        "取得対象",
+        ["チャンネルの最新動画", "プレイリスト"],
+        horizontal=True,
+        key="latest_mode",
     )
+
+    if latest_mode == "チャンネルの最新動画":
+        latest_channel_url = st.text_input(
+            "チャンネルのURL（/channel/UC… または /@handle）",
+            placeholder="https://www.youtube.com/@Google",
+            key="latest_channel_url",
+        )
+        latest_playlist_url = ""
+    else:
+        latest_playlist_url = st.text_input(
+            "プレイリストのURL（watch?v=…&list=… でも可）",
+            placeholder="https://www.youtube.com/playlist?list=PLxxxxxxxx",
+            key="latest_playlist_url",
+        )
+        latest_channel_url = ""
 
     latest_n = st.slider(
         "取得件数（n）",
@@ -1198,6 +1261,14 @@ with tab3:
         value=50,
         step=5,
         key="latest_n",
+    )
+
+    sort_choice = st.radio(
+        "並び順",
+        ["公開日で降順（最新が上）", "プレイリスト登録順を保持（ソートしない）"],
+        index=0,
+        help="プレイリスト利用時に登録順を尊重したい場合は『プレイリスト登録順』を選択してください。",
+        key="latest_sort_choice",
     )
 
     api_key_latest = resolve_api_key(
@@ -1209,34 +1280,58 @@ with tab3:
     run_latest = st.button("実行（最新動画取得→CSV生成）", key="latest_run")
 
     if run_latest:
-        if not latest_channel_url:
-            st.error("チャンネルURLを入力してください。")
-            st.stop()
         if not api_key_latest:
             st.error("このタブはYouTube Data API v3のみで実装しているため、APIキーが必須です。")
             st.stop()
 
-        ch_id = resolve_channel_id_from_url(latest_channel_url, api_key_latest)
-        if not ch_id:
-            st.error("チャンネルIDを特定できませんでした（/channel/UC… 形式か、@handle の綴りを確認してください）。")
-            st.stop()
+        keep_playlist_order = latest_mode == "プレイリスト" and sort_choice == "プレイリスト登録順を保持（ソートしない）"
 
-        st.info(f"チャンネルID：{ch_id}")
+        if latest_mode == "チャンネルの最新動画":
+            if not latest_channel_url:
+                st.error("チャンネルURLを入力してください。")
+                st.stop()
 
-        video_ids = list_latest_video_ids_mixed(ch_id, api_key_latest, latest_n)
-        if not video_ids:
-            st.error("最新動画IDを取得できませんでした（APIキー/クォータ/権限を確認してください）。")
-            st.stop()
+            ch_id = resolve_channel_id_from_url(latest_channel_url, api_key_latest)
+            if not ch_id:
+                st.error("チャンネルIDを特定できませんでした（/channel/UC… 形式か、@handle の綴りを確認してください）。")
+                st.stop()
+
+            st.info(f"チャンネルID：{ch_id}")
+
+            video_ids = list_latest_video_ids_mixed(ch_id, api_key_latest, latest_n)
+            if not video_ids:
+                st.error("最新動画IDを取得できませんでした（APIキー/クォータ/権限を確認してください）。")
+                st.stop()
+        else:
+            if not latest_playlist_url:
+                st.error("プレイリストURLを入力してください。")
+                st.stop()
+
+            playlist_id = extract_playlist_id(latest_playlist_url)
+            if not playlist_id:
+                st.error("URLから playlistId を抽出できませんでした。list=XXXX を含むURLを指定してください。")
+                st.stop()
+
+            st.info(f"プレイリストID：{playlist_id}")
+
+            video_ids = list_playlist_video_ids(playlist_id, api_key_latest, latest_n)
+            if not video_ids:
+                st.error("プレイリスト内の動画IDを取得できませんでした（APIキー/クォータ/権限、URLを確認してください）。")
+                st.stop()
 
         details_map = fetch_titles_and_best_dates_bulk(video_ids, api_key_latest, TZ_NAME)
 
         records = []
+        skipped = 0
         for vid in video_ids:
             d = details_map.get(vid, {})
             title = d.get("title", "") or ""
             ymd = d.get("yyyymmdd", "") or ""
             src = d.get("date_source", "") or ""
             epoch = int(d.get("sort_epoch", "0") or "0")
+            if not title and not ymd and not src and not epoch:
+                skipped += 1
+                continue
             url2 = f"https://www.youtube.com/watch?v={vid}"
             records.append({
                 "sort_epoch": epoch,
@@ -1246,11 +1341,15 @@ with tab3:
                 "date_source": src,
             })
 
-        records.sort(key=lambda x: x["sort_epoch"], reverse=True)
+        if not keep_playlist_order:
+            records.sort(key=lambda x: x["sort_epoch"], reverse=True)
 
         rows = [["動画タイトル", "動画URL", "公開日(yyyymmdd)"]]
         for r in records:
             rows.append([r["title"], r["url"], r["yyyymmdd"]])
+
+        if skipped:
+            st.warning(f"{skipped} 件の動画は詳細を取得できなかったためスキップしました（非公開/削除などの可能性があります）。")
 
         st.success(f"取得完了：{len(records)} 件")
         st.dataframe(pd.DataFrame(records).drop(columns=["sort_epoch"]), use_container_width=True)
