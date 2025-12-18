@@ -28,27 +28,12 @@ GLOBAL_API_KEY = st.secrets.get("YT_API_KEY", "")
 # ==============================
 # 共通ユーティリティ
 # ==============================
-def resolve_api_key(
-    default_key: str,
-    input_state_key: str,
-    expander_label: str,
-    input_label: str = "YT_API_KEY",
-) -> str:
+def resolve_api_key() -> str:
     shared_key = st.session_state.get("shared_api_key", "") or ""
-    api_key = shared_key or default_key
-
-    if default_key and not shared_key:
-        st.session_state["shared_api_key"] = default_key
-
-    if not api_key:
-        with st.expander(expander_label):
-            api_key = st.text_input(input_label, type="password", key=input_state_key)
-
-    api_key = api_key or ""
-    if api_key and api_key != shared_key:
-        st.session_state["shared_api_key"] = api_key
-
-    return api_key
+    if not shared_key and GLOBAL_API_KEY:
+        st.session_state["shared_api_key"] = GLOBAL_API_KEY
+        shared_key = GLOBAL_API_KEY
+    return (shared_key or "").strip()
 
 
 def yt_get_json(path: str, params: Dict, timeout: int = 10) -> Optional[dict]:
@@ -482,7 +467,7 @@ def generate_rows(
 # tab1: コールバック（重要：widget key を安全に更新する）
 # ==============================
 def _get_ts_api_key() -> str:
-    return (GLOBAL_API_KEY or st.session_state.get("ts_api_key", "") or "").strip()
+    return resolve_api_key()
 
 
 def _get_manual_yyyymmdd() -> str:
@@ -893,6 +878,20 @@ def fetch_titles_and_best_dates_bulk(video_ids: List[str], api_key: str, tz_name
     return out
 
 # ==============================
+# 共有APIキー入力
+# ==============================
+if "shared_api_key" not in st.session_state:
+    st.session_state["shared_api_key"] = GLOBAL_API_KEY or ""
+
+st.text_input(
+    "YouTube APIキー（任意）",
+    key="shared_api_key",
+    type="password",
+    placeholder="AIza…",
+    help="設定すると全タブで共通利用します。シークレットに YT_API_KEY があれば初期値に適用されます。",
+)
+
+# ==============================
 # タブレイアウト
 # ==============================
 tab1, tab2, tab3 = st.tabs(["⏱ タイムスタンプCSV", "🎬 Shorts→CSV", "🆕 最新動画→CSV"])
@@ -908,11 +907,7 @@ with tab1:
         key="ts_url",
     )
 
-    api_key_ts = resolve_api_key(
-        default_key=GLOBAL_API_KEY,
-        input_state_key="ts_api_key",
-        expander_label="YouTube APIキー（任意）",
-    )
+    api_key_ts = resolve_api_key()
 
     st.markdown("### 入力方式")
     input_mode = st.radio(
@@ -1148,11 +1143,7 @@ with tab2:
         key="shorts_max_items",
     )
 
-    api_key_shorts = resolve_api_key(
-        default_key=GLOBAL_API_KEY,
-        input_state_key="shorts_api_key",
-        expander_label="YouTube APIキー（推奨。未設定時は簡易スクレイピングで試行、公開日は取得できません）",
-    )
+    api_key_shorts = resolve_api_key()
 
     run = st.button("実行（ショート取得→推定→CSV生成）", key="shorts_run")
 
@@ -1281,11 +1272,7 @@ with tab3:
         key="latest_sort_choice",
     )
 
-    api_key_latest = resolve_api_key(
-        default_key=GLOBAL_API_KEY,
-        input_state_key="latest_api_key",
-        expander_label="YouTube APIキー（必須）",
-    )
+    api_key_latest = resolve_api_key()
 
     run_latest = st.button("実行（最新動画取得→CSV生成）", key="latest_run")
 
