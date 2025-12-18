@@ -15,7 +15,7 @@ import pandas as pd
 # ==============================
 st.set_page_config(page_title="タイムスタンプCSV出力", layout="centered")
 
-st.title("YouTube CSVツール")
+st.title("タイムスタンプ出力ツール")
 st.write("タイムスタンプCSV生成とショート動画CSV生成、最新動画一覧CSV生成")
 
 DATE_TITLE_SEPARATOR = " "
