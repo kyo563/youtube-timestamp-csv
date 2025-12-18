@@ -4,7 +4,7 @@ import csv
 import io
 import requests
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Tuple, List, Optional, Dict
 from zoneinfo import ZoneInfo
 import unicodedata
@@ -40,6 +40,7 @@ def resolve_api_key(
             api_key = st.text_input(input_label, type="password", key=input_state_key)
     return api_key or ""
 
+
 def yt_get_json(path: str, params: Dict, timeout: int = 10) -> Optional[dict]:
     """
     YouTube Data API v3 GET（失敗時 None）
@@ -52,22 +53,45 @@ def yt_get_json(path: str, params: Dict, timeout: int = 10) -> Optional[dict]:
     except Exception:
         return None
 
+
+def yt_get_json_verbose(path: str, params: Dict, timeout: int = 10) -> Tuple[Optional[dict], Optional[str]]:
+    """
+    YouTube Data API v3 GET（失敗時 (None, error_message)）
+    """
+    try:
+        r = requests.get(f"{YT_API_BASE}/{path.lstrip('/')}", params=params, timeout=timeout)
+        if r.status_code != 200:
+            try:
+                j = r.json()
+                msg = (j.get("error", {}) or {}).get("message") or ""
+            except Exception:
+                msg = r.text[:300] if r.text else ""
+            return None, f"{r.status_code} {msg}".strip()
+        return r.json(), None
+    except Exception as e:
+        return None, str(e)
+
+
 def to_csv(rows: List[List[str]]) -> str:
     buf = io.StringIO()
     csv.writer(buf, quoting=csv.QUOTE_ALL).writerows(rows)
     return buf.getvalue()
 
+
 def make_excel_hyperlink(url_: str, label: str) -> str:
     safe = (label or "").replace('"', '""')
     return f'=HYPERLINK("{url_}","{safe}")'
 
+
 def is_valid_youtube_url(u: str) -> bool:
     return bool(re.match(r"^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.?be)\/.+$", u or ""))
+
 
 def normalize_text(s: str) -> str:
     s = (s or "").replace("／", "/")
     s = s.replace("　", " ").strip()
     return re.sub(r"\s+", " ", s)
+
 
 def extract_video_id(u: str) -> Optional[str]:
     if not u:
@@ -89,6 +113,7 @@ def extract_video_id(u: str) -> Optional[str]:
         return None
     except Exception:
         return None
+
 
 def normalize_manual_date_input(raw: str, tz_name: str) -> Optional[str]:
     s = (raw or "").strip()
@@ -130,6 +155,7 @@ def normalize_manual_date_input(raw: str, tz_name: str) -> Optional[str]:
 
     return dt.strftime("%Y%m%d")
 
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_video_title_from_oembed(watch_url: str) -> str:
     try:
@@ -144,6 +170,7 @@ def fetch_video_title_from_oembed(watch_url: str) -> str:
     except Exception:
         pass
     return "YouTube動画"
+
 
 def iso_utc_to_tz_epoch_and_yyyymmdd(iso_str: str, tz_name: str) -> Tuple[Optional[int], Optional[str]]:
     """
@@ -161,24 +188,44 @@ def iso_utc_to_tz_epoch_and_yyyymmdd(iso_str: str, tz_name: str) -> Tuple[Option
     except Exception:
         return None, None
 
+
 def iso_utc_to_tz_yyyymmdd(iso_str: str, tz_name: str) -> Optional[str]:
     _, ymd = iso_utc_to_tz_epoch_and_yyyymmdd(iso_str, tz_name)
     return ymd
 
+
 # ==============================
 # タブ1：タイムスタンプCSVジェネレーター用関数
 # ==============================
+TIMESTAMP_START_RE = re.compile(r"^\s*(?:[-*•▶▷\u25CF\u25A0\u25B6\u25B7\u30FB]\s*)*(\d{1,2}:)?(\d{1,2}):(\d{2})\b")
+
+
+def _strip_leading_glyphs(line: str) -> str:
+    # 先頭の箇条書き記号などを軽く剥がす（コメント由来の書式崩れ対策）
+    return re.sub(r"^\s*(?:[-*•▶▷\u25CF\u25A0\u25B6\u25B7\u30FB]\s*)+", "", line or "")
+
+
 def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Optional[str]]:
-    m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", line)
+    """
+    1行から (seconds, artist, song) を抽出。
+    コメント由来の「・ 0:35 ...」も拾えるように、先頭の記号は許容します。
+    """
+    if not line:
+        return (None, None, None)
+
+    work = _strip_leading_glyphs(line)
+    m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", work)
     if not m:
         return (None, None, None)
+
     time_str = m.group(0)
     parts = list(map(int, time_str.split(":")))
     if len(parts) == 3:
         seconds = parts[0] * 3600 + parts[1] * 60 + parts[2]
     else:
         seconds = parts[0] * 60 + parts[1]
-    info = line[len(time_str):].strip()
+
+    info = work[len(time_str):].strip()
 
     msep = re.search(r"\s(-|—|–|―|－|/|／|by|BY)\s", info)
     if msep:
@@ -191,6 +238,7 @@ def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Opt
         return (seconds, artist, song)
 
     return (seconds, "N/A", normalize_text(info) or "N/A")
+
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_best_display_date_and_sources(video_id: str, api_key: str, tz_name: str) -> Dict[str, Optional[str]]:
@@ -232,6 +280,139 @@ def fetch_best_display_date_and_sources(video_id: str, api_key: str, tz_name: st
         result["source"] = "publishedAt"
 
     return result
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_video_channel_id(video_id: str, api_key: str) -> Optional[str]:
+    if not api_key or not video_id:
+        return None
+    data = yt_get_json(
+        "videos",
+        {"part": "snippet", "id": video_id, "key": api_key},
+        timeout=10
+    )
+    if not data or not data.get("items"):
+        return None
+    snip = data["items"][0].get("snippet", {}) or {}
+    return snip.get("channelId")
+
+
+def _count_timestamp_lines(text: str) -> int:
+    n = 0
+    for raw in (text or "").splitlines():
+        s = normalize_text(raw)
+        if not s:
+            continue
+        if TIMESTAMP_START_RE.match(s):
+            n += 1
+    return n
+
+
+def _extract_timestamp_lines(text: str, flip: bool) -> str:
+    """
+    parse_line が秒数を取れる行だけ抜き出して返す（ノイズ削減用）
+    """
+    out = []
+    for raw in (text or "").splitlines():
+        s = normalize_text(raw)
+        if not s:
+            continue
+        sec, _, _ = parse_line(s, flip)
+        if sec is not None:
+            out.append(_strip_leading_glyphs(raw).strip())
+    return "\n".join(out).strip()
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def fetch_timestamp_comment_candidates(
+    video_id: str,
+    api_key: str,
+    order: str = "relevance",
+    search_terms: str = "",
+    max_pages: int = 3,
+) -> Tuple[List[dict], Optional[str]]:
+    """
+    コメントからタイムスタンプ候補を収集してスコア順で返す。
+    返り値: (candidates, error_message)
+    """
+    if not api_key:
+        return [], "APIキーが必要です。"
+    if not video_id:
+        return [], "videoId が空です。"
+
+    # 動画の投稿チャンネルID（=本人コメント判定用）
+    owner_channel_id = fetch_video_channel_id(video_id, api_key)
+
+    candidates: List[dict] = []
+    page_token = None
+    pages = 0
+
+    while pages < max_pages:
+        params = {
+            "part": "snippet",
+            "videoId": video_id,
+            "maxResults": 100,
+            "order": order,
+            "textFormat": "plainText",
+            "key": api_key,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+        if (search_terms or "").strip():
+            params["searchTerms"] = (search_terms or "").strip()
+
+        data, err = yt_get_json_verbose("commentThreads", params, timeout=10)
+        if err:
+            return [], f"commentThreads.list 失敗: {err}"
+        if not data:
+            break
+
+        items = data.get("items", []) or []
+        for it in items:
+            sn = it.get("snippet", {}) or {}
+            tlc = sn.get("topLevelComment", {}) or {}
+            tlc_sn = (tlc.get("snippet", {}) or {})
+
+            # plainText を要求しているので textDisplay をそのまま使う（HTML混入を避ける）
+            text = (tlc_sn.get("textDisplay") or "").strip()
+            if not text:
+                continue
+
+            like_count = int(tlc_sn.get("likeCount") or 0)
+            author_ch_obj = tlc_sn.get("authorChannelId") or {}
+            author_channel_id = author_ch_obj.get("value") if isinstance(author_ch_obj, dict) else None
+
+            ts_lines = _count_timestamp_lines(text)
+            if ts_lines <= 0:
+                continue
+
+            is_owner = bool(owner_channel_id and author_channel_id and owner_channel_id == author_channel_id)
+
+            # スコア（雑でOK。実運用で調整前提）
+            score = ts_lines * 10
+            if is_owner:
+                score += 60
+            score += min(like_count, 500) / 10.0
+
+            candidates.append({
+                "score": score,
+                "ts_lines": ts_lines,
+                "likeCount": like_count,
+                "is_owner": is_owner,
+                "authorChannelId": author_channel_id or "",
+                "text": text,
+                "commentId": tlc.get("id", ""),
+                "publishedAt": tlc_sn.get("publishedAt", ""),
+            })
+
+        page_token = data.get("nextPageToken")
+        pages += 1
+        if not page_token:
+            break
+
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    return candidates, None
+
 
 def generate_rows(
     u: str,
@@ -363,6 +544,7 @@ def resolve_channel_id_from_url(url: str, api_key: str) -> Optional[str]:
     except Exception:
         return None
 
+
 def list_channel_videos(channel_id: str, api_key: str, limit: int = 50) -> List[str]:
     ids: List[str] = []
     token = None
@@ -389,12 +571,14 @@ def list_channel_videos(channel_id: str, api_key: str, limit: int = 50) -> List[
             break
     return ids[:limit]
 
+
 def iso8601_to_seconds(iso: str) -> int:
     m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso or "")
     h = int(m.group(1) or 0) if m else 0
     m_ = int(m.group(2) or 0) if m else 0
     s = int(m.group(3) or 0) if m else 0
     return h*3600 + m_*60 + s
+
 
 def fetch_video_meta(video_ids: List[str], api_key: str):
     out = []
@@ -417,6 +601,7 @@ def fetch_video_meta(video_ids: List[str], api_key: str):
             out.append({"videoId": vid, "title": title, "seconds": dur, "yyyymmdd": ymd})
     return out
 
+
 def clean_for_parse(s: str) -> str:
     s = (s or "").replace("／", "/")
     s = re.sub(r"https?://\S+", " ", s)
@@ -424,6 +609,7 @@ def clean_for_parse(s: str) -> str:
     s = re.sub(r"[【\[][^】\]]*[】\]]", " ", s)
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
 
 def split_artist_song_from_title(title: str) -> Tuple[str, str]:
     t = clean_for_parse(title)
@@ -455,6 +641,7 @@ def split_artist_song_from_title(title: str) -> Tuple[str, str]:
 
     return "N/A", t or "N/A"
 
+
 def scrape_shorts_ids_from_web(url: str, limit: int = 50) -> List[str]:
     try:
         pr = urllib.parse.urlparse(url)
@@ -480,9 +667,6 @@ def scrape_shorts_ids_from_web(url: str, limit: int = 50) -> List[str]:
 
 # ==============================
 # タブ3：最新動画一覧 → CSV（作り変え版）
-#   - search.list(order=date, type=video) で最新動画IDを n件
-#   - videos.list で title + (actualStartTime > scheduledStartTime > publishedAt) の日付を確定
-#   - 取得結果は「選んだ日時」で降順ソートしてCSV
 # ==============================
 @st.cache_data(show_spinner=False, ttl=600)
 def list_latest_video_ids_mixed(channel_id: str, api_key: str, limit: int) -> List[str]:
@@ -522,6 +706,7 @@ def list_latest_video_ids_mixed(channel_id: str, api_key: str, limit: int) -> Li
             break
 
     return ids[:limit]
+
 
 @st.cache_data(show_spinner=False, ttl=600)
 def fetch_titles_and_best_dates_bulk(video_ids: List[str], api_key: str, tz_name: str) -> Dict[str, Dict[str, str]]:
@@ -578,7 +763,7 @@ def fetch_titles_and_best_dates_bulk(video_ids: List[str], api_key: str, tz_name
                 "title": title,
                 "yyyymmdd": ymd,
                 "date_source": src,
-                "sort_epoch": str(epoch),  # cacheの安定性のため文字列で保持
+                "sort_epoch": str(epoch),
             }
 
     return out
@@ -602,7 +787,16 @@ with tab1:
     api_key_ts = resolve_api_key(
         default_key=GLOBAL_API_KEY,
         input_state_key="ts_api_key",
-        expander_label="YouTube APIキー（任意。未設定でも手動で公開日を指定できます）",
+        expander_label="YouTube APIキー（任意。未設定でも手動で公開日を指定できます）※コメント自動取得はAPIキー必須",
+    )
+
+    # 入力方式（手動/自動）
+    st.markdown("### 入力方式")
+    input_mode = st.radio(
+        "タイムスタンプ情報の取得方法",
+        ["手動（貼り付け）", "自動（コメントから取得）"],
+        horizontal=True,
+        key="ts_input_mode",
     )
 
     manual_date_raw_ts: str = ""
@@ -615,6 +809,7 @@ with tab1:
             key="ts_manual_date_raw",
         )
 
+    # 既存入力（常に表示：自動取得後に微調整できるようにする）
     timestamps_input_ts = st.text_area(
         "2. 楽曲リスト（タイムスタンプ付き）",
         placeholder="例：\n0:35 曲名A / アーティスト名A\n6:23 曲名B - アーティスト名B\n1:10:05 曲名C by アーティスト名C",
@@ -631,6 +826,146 @@ with tab1:
             manual_date_ts = ""
             st.error("日付として解釈できませんでした。例: 2025/11/19, 11/19, 3月20日 などの形式で入力してください。")
 
+    # --- 自動取得UI ---
+    if input_mode == "自動（コメントから取得）":
+        st.markdown("### 🤖 コメントからタイムスタンプを自動取得")
+
+        if not api_key_ts:
+            st.warning("コメント自動取得はYouTube Data API v3 のAPIキーが必須です。APIキーを設定してください。")
+        else:
+            col_a1, col_a2 = st.columns([2, 2])
+            with col_a1:
+                auto_order = st.selectbox(
+                    "コメント取得順（候補の並び）",
+                    ["relevance", "time"],
+                    index=0,
+                    help="relevanceはピン留め/高評価コメントが上位に来やすい想定です。",
+                    key="ts_auto_order",
+                )
+            with col_a2:
+                auto_search_terms = st.text_input(
+                    "検索語（任意。入れるとコメントを絞れます）",
+                    value="",
+                    key="ts_auto_search_terms",
+                )
+
+            col_a3, col_a4 = st.columns([2, 2])
+            with col_a3:
+                auto_pages = st.slider(
+                    "探索ページ数（多いほど重くなります）",
+                    min_value=1, max_value=10, value=3, step=1,
+                    key="ts_auto_pages",
+                )
+            with col_a4:
+                auto_only_ts_lines = st.checkbox(
+                    "タイムスタンプ行だけ抽出して貼り付ける（推奨）",
+                    value=True,
+                    key="ts_auto_only_ts_lines",
+                )
+
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                auto_fetch = st.button("🤖 コメント候補を取得する", key="ts_auto_fetch")
+            with col_btn2:
+                auto_fetch_and_preview = st.button("🤖 取得→自動選択→プレビュー", key="ts_auto_fetch_preview")
+
+            def _run_preview_with_text(ts_text: str):
+                flip = st.session_state.get("flip_ts", False)
+                rows, preview, invalid, video_title = generate_rows(
+                    url, ts_text, TZ_NAME, api_key_ts, manual_date_ts, flip
+                )
+                st.session_state["ts_preview_df"] = preview
+                st.session_state["ts_preview_invalid"] = invalid
+                st.session_state["ts_preview_title"] = video_title
+                return len(preview), len(invalid)
+
+            if auto_fetch or auto_fetch_and_preview:
+                if not url:
+                    st.error("まずURLを入力してください。")
+                elif not is_valid_youtube_url(url):
+                    st.error("有効なYouTube URLを入力してください。")
+                else:
+                    vid = extract_video_id(url)
+                    if not vid:
+                        st.error("URLからビデオIDを抽出できませんでした。")
+                    else:
+                        with st.spinner("コメントを取得しています..."):
+                            cands, err = fetch_timestamp_comment_candidates(
+                                video_id=vid,
+                                api_key=api_key_ts,
+                                order=st.session_state.get("ts_auto_order", "relevance"),
+                                search_terms=st.session_state.get("ts_auto_search_terms", ""),
+                                max_pages=int(st.session_state.get("ts_auto_pages", 3)),
+                            )
+                        if err:
+                            st.error(err)
+                        elif not cands:
+                            st.warning("タイムスタンプっぽいコメントが見つかりませんでした（コメント無効/未投稿/書式違いの可能性）。")
+                        else:
+                            st.session_state["ts_auto_candidates"] = cands
+                            st.success(f"候補を {len(cands)} 件見つけました。")
+
+                            # 自動プレビューの場合：最上位を採用
+                            if auto_fetch_and_preview:
+                                best = cands[0]
+                                flip = st.session_state.get("flip_ts", False)
+                                ts_text = best["text"]
+                                if st.session_state.get("ts_auto_only_ts_lines", True):
+                                    extracted = _extract_timestamp_lines(ts_text, flip)
+                                    ts_text = extracted if extracted else ts_text
+
+                                st.session_state["timestamps_input_ts"] = ts_text
+                                try:
+                                    ok, ng = _run_preview_with_text(ts_text)
+                                    st.success(f"自動選択でプレビュー生成しました：解析 {ok} 件 / 未解析 {ng} 件")
+                                except Exception as e:
+                                    st.error(f"プレビュー生成に失敗しました：{e}")
+
+            # 候補があれば選択UI
+            cands = st.session_state.get("ts_auto_candidates", [])
+            if cands:
+                st.markdown("#### 候補を選んで貼り付ける")
+                labels = []
+                for i, c in enumerate(cands[:30], start=1):
+                    head = (c["text"].splitlines()[0] if c["text"] else "").strip()
+                    head = head[:60] + ("…" if len(head) > 60 else "")
+                    owner_tag = "本人" if c.get("is_owner") else "外部"
+                    labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {owner_tag} / {head}")
+
+                picked = st.selectbox("コメント候補", labels, key="ts_auto_pick")
+                picked_idx = labels.index(picked)
+                picked_c = cands[picked_idx]
+
+                col_pick1, col_pick2 = st.columns(2)
+                with col_pick1:
+                    if st.button("この候補を貼り付ける", key="ts_auto_apply"):
+                        flip = st.session_state.get("flip_ts", False)
+                        ts_text = picked_c["text"]
+                        if st.session_state.get("ts_auto_only_ts_lines", True):
+                            extracted = _extract_timestamp_lines(ts_text, flip)
+                            ts_text = extracted if extracted else ts_text
+                        st.session_state["timestamps_input_ts"] = ts_text
+                        st.success("貼り付けました。必要ならそのまま下のプレビュー/CSV生成に進んでください。")
+                        st.rerun()
+                with col_pick2:
+                    if st.button("この候補でプレビュー生成", key="ts_auto_apply_preview"):
+                        flip = st.session_state.get("flip_ts", False)
+                        ts_text = picked_c["text"]
+                        if st.session_state.get("ts_auto_only_ts_lines", True):
+                            extracted = _extract_timestamp_lines(ts_text, flip)
+                            ts_text = extracted if extracted else ts_text
+                        st.session_state["timestamps_input_ts"] = ts_text
+                        try:
+                            ok, ng = _run_preview_with_text(ts_text)
+                            st.success(f"プレビュー生成しました：解析 {ok} 件 / 未解析 {ng} 件")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"プレビュー生成に失敗しました：{e}")
+
+                with st.expander("選択中コメント（全文）"):
+                    st.text(picked_c["text"])
+
+    # --- 既存：左右反転・プレビュー・CSV ---
     c1, c2 = st.columns(2)
     with c1:
         st.toggle("左右反転", value=False, key="flip_ts")
@@ -824,7 +1159,7 @@ with tab2:
             except Exception as e:
                 st.error(f"エラー: {e}")
 
-# ---------------- タブ3（作り変え版） ----------------
+# ---------------- タブ3 ----------------
 with tab3:
     st.subheader("最新動画（動画/ショート/ライブ）→CSV（改）")
     st.write(
@@ -877,7 +1212,6 @@ with tab3:
 
         details_map = fetch_titles_and_best_dates_bulk(video_ids, api_key_latest, TZ_NAME)
 
-        # details_map の sort_epoch（選んだ日時）で降順ソートして、並び順を「実際の公開日」に寄せる
         records = []
         for vid in video_ids:
             d = details_map.get(vid, {})
@@ -885,12 +1219,12 @@ with tab3:
             ymd = d.get("yyyymmdd", "") or ""
             src = d.get("date_source", "") or ""
             epoch = int(d.get("sort_epoch", "0") or "0")
-            url = f"https://www.youtube.com/watch?v={vid}"
+            url2 = f"https://www.youtube.com/watch?v={vid}"
             records.append({
                 "sort_epoch": epoch,
                 "yyyymmdd": ymd,
                 "title": title,
-                "url": url,
+                "url": url2,
                 "date_source": src,
             })
 
