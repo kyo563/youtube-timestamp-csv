@@ -201,31 +201,20 @@ TIMESTAMP_START_RE = re.compile(r"^\s*(?:[-*•▶▷\u25CF\u25A0\u25B6\u25B7\u3
 
 
 def _strip_leading_glyphs(line: str) -> str:
-    # 先頭の箇条書き記号などを軽く剥がす（コメント由来の書式崩れ対策）
     return re.sub(r"^\s*(?:[-*•▶▷\u25CF\u25A0\u25B6\u25B7\u30FB]\s*)+", "", line or "")
 
 
 def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Optional[str]]:
-    """
-    1行から (seconds, artist, song) を抽出。
-    コメント由来の「・ 0:35 ...」も拾えるように、先頭の記号は許容します。
-    """
-    if not line:
-        return (None, None, None)
-
-    work = _strip_leading_glyphs(line)
-    m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", work)
+    m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", _strip_leading_glyphs(line))
     if not m:
         return (None, None, None)
-
     time_str = m.group(0)
     parts = list(map(int, time_str.split(":")))
     if len(parts) == 3:
         seconds = parts[0] * 3600 + parts[1] * 60 + parts[2]
     else:
         seconds = parts[0] * 60 + parts[1]
-
-    info = work[len(time_str):].strip()
+    info = _strip_leading_glyphs(line)[len(time_str):].strip()
 
     msep = re.search(r"\s(-|—|–|―|－|/|／|by|BY)\s", info)
     if msep:
@@ -309,9 +298,6 @@ def _count_timestamp_lines(text: str) -> int:
 
 
 def _extract_timestamp_lines(text: str, flip: bool) -> str:
-    """
-    parse_line が秒数を取れる行だけ抜き出して返す（ノイズ削減用）
-    """
     out = []
     for raw in (text or "").splitlines():
         s = normalize_text(raw)
@@ -340,7 +326,6 @@ def fetch_timestamp_comment_candidates(
     if not video_id:
         return [], "videoId が空です。"
 
-    # 動画の投稿チャンネルID（=本人コメント判定用）
     owner_channel_id = fetch_video_channel_id(video_id, api_key)
 
     candidates: List[dict] = []
@@ -373,7 +358,6 @@ def fetch_timestamp_comment_candidates(
             tlc = sn.get("topLevelComment", {}) or {}
             tlc_sn = (tlc.get("snippet", {}) or {})
 
-            # plainText を要求しているので textDisplay をそのまま使う（HTML混入を避ける）
             text = (tlc_sn.get("textDisplay") or "").strip()
             if not text:
                 continue
@@ -388,7 +372,6 @@ def fetch_timestamp_comment_candidates(
 
             is_owner = bool(owner_channel_id and author_channel_id and owner_channel_id == author_channel_id)
 
-            # スコア（雑でOK。実運用で調整前提）
             score = ts_lines * 10
             if is_owner:
                 score += 60
@@ -472,19 +455,111 @@ def generate_rows(
 
     return rows, parsed_preview, invalid_lines, video_title
 
+
+# ==============================
+# tab1: コールバック（重要：widget key を安全に更新する）
+# ==============================
+def _get_ts_api_key() -> str:
+    return (GLOBAL_API_KEY or st.session_state.get("ts_api_key", "") or "").strip()
+
+
+def _get_manual_yyyymmdd() -> str:
+    raw = (st.session_state.get("ts_manual_date_raw", "") or "").strip()
+    if not raw:
+        return ""
+    normalized = normalize_manual_date_input(raw, TZ_NAME)
+    return normalized or ""
+
+
+def _set_preview_from_text(url: str, ts_text: str) -> None:
+    flip = st.session_state.get("flip_ts", False)
+    api_key = _get_ts_api_key()
+    manual_date = _get_manual_yyyymmdd()
+
+    rows, preview, invalid, video_title = generate_rows(
+        url, ts_text, TZ_NAME, api_key, manual_date, flip
+    )
+    st.session_state["ts_preview_df"] = preview
+    st.session_state["ts_preview_invalid"] = invalid
+    st.session_state["ts_preview_title"] = video_title
+    st.session_state["ts_auto_msg"] = f"プレビュー生成：解析 {len(preview)} 件 / 未解析 {len(invalid)} 件"
+    st.session_state.pop("ts_auto_err", None)
+
+
+def _apply_comment_text(comment_text: str, do_preview: bool) -> None:
+    flip = st.session_state.get("flip_ts", False)
+    ts_text = comment_text or ""
+
+    if st.session_state.get("ts_auto_only_ts_lines", True):
+        extracted = _extract_timestamp_lines(ts_text, flip)
+        if extracted:
+            ts_text = extracted
+
+    # callback 内で widget key を更新する（ここが肝）
+    st.session_state["timestamps_input_ts"] = ts_text
+
+    if do_preview:
+        url = (st.session_state.get("ts_url", "") or "").strip()
+        try:
+            _set_preview_from_text(url, ts_text)
+        except Exception as e:
+            st.session_state["ts_auto_err"] = f"プレビュー生成に失敗しました：{e}"
+            st.session_state.pop("ts_auto_msg", None)
+
+
+def cb_fetch_candidates(do_autoselect_preview: bool) -> None:
+    url = (st.session_state.get("ts_url", "") or "").strip()
+    if not url or not is_valid_youtube_url(url):
+        st.session_state["ts_auto_err"] = "URLが空、または無効です。"
+        return
+
+    api_key = _get_ts_api_key()
+    if not api_key:
+        st.session_state["ts_auto_err"] = "コメント自動取得はAPIキー必須です。"
+        return
+
+    vid = extract_video_id(url)
+    if not vid:
+        st.session_state["ts_auto_err"] = "URLからビデオIDを抽出できませんでした。"
+        return
+
+    order = st.session_state.get("ts_auto_order", "relevance")
+    terms = st.session_state.get("ts_auto_search_terms", "")
+    pages = int(st.session_state.get("ts_auto_pages", 3))
+
+    cands, err = fetch_timestamp_comment_candidates(
+        video_id=vid,
+        api_key=api_key,
+        order=order,
+        search_terms=terms,
+        max_pages=pages,
+    )
+    if err:
+        st.session_state["ts_auto_err"] = err
+        st.session_state["ts_auto_candidates"] = []
+        return
+
+    st.session_state["ts_auto_candidates"] = cands
+    st.session_state["ts_auto_msg"] = f"コメント候補取得：{len(cands)} 件"
+    st.session_state.pop("ts_auto_err", None)
+
+    if do_autoselect_preview and cands:
+        _apply_comment_text(cands[0]["text"], do_preview=True)
+
+
+def cb_apply_candidate(index: int, do_preview: bool) -> None:
+    cands = st.session_state.get("ts_auto_candidates", []) or []
+    if not cands or index < 0 or index >= len(cands):
+        st.session_state["ts_auto_err"] = "候補がありません（先に「コメント候補を取得」してください）。"
+        return
+    _apply_comment_text(cands[index]["text"], do_preview=do_preview)
+
+
 # ==============================
 # タブ2：Shorts → CSV 用関数
 # ==============================
 @st.cache_data(show_spinner=False, ttl=600)
 def resolve_channel_id_from_url(url: str, api_key: str) -> Optional[str]:
-    """
-    チャンネルURLから channelId を解決します（APIキー必須）。
-    優先：
-      1) /channel/UC...
-      2) /@handle -> channels.list(forHandle=)
-      3) /user/xxx -> channels.list(forUsername=)
-      4) /c/xxx or その他 -> search.list(type=channel,q=)（曖昧一致の可能性あり）
-    """
     if not url or not api_key:
         return None
 
@@ -651,8 +726,8 @@ def scrape_shorts_ids_from_web(url: str, limit: int = 50) -> List[str]:
             target = base + m.group(0) + "/shorts"
         else:
             target = base + pr.path.rstrip("/") + "/shorts"
-        html = requests.get(target, timeout=10, headers={"User-Agent": "Mozilla/5.0"}).text
-        vids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
+        html_ = requests.get(target, timeout=10, headers={"User-Agent": "Mozilla/5.0"}).text
+        vids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html_)
         seen = set()
         uniq = []
         for v in vids:
@@ -666,13 +741,10 @@ def scrape_shorts_ids_from_web(url: str, limit: int = 50) -> List[str]:
         return []
 
 # ==============================
-# タブ3：最新動画一覧 → CSV（作り変え版）
+# タブ3：最新動画一覧 → CSV（改）
 # ==============================
 @st.cache_data(show_spinner=False, ttl=600)
 def list_latest_video_ids_mixed(channel_id: str, api_key: str, limit: int) -> List[str]:
-    """
-    search.list でチャンネルの最新 videoId を limit 件取得（動画/ショート/ライブ混在）。
-    """
     ids: List[str] = []
     token = None
     seen = set()
@@ -710,11 +782,6 @@ def list_latest_video_ids_mixed(channel_id: str, api_key: str, limit: int) -> Li
 
 @st.cache_data(show_spinner=False, ttl=600)
 def fetch_titles_and_best_dates_bulk(video_ids: List[str], api_key: str, tz_name: str) -> Dict[str, Dict[str, str]]:
-    """
-    videos.list(part=snippet,liveStreamingDetails) をまとめて取得し、
-    公開日(yyyymmdd)は actualStartTime → scheduledStartTime → publishedAt。
-    追加で sort_epoch（選んだ日時のepoch）も返します。
-    """
     out: Dict[str, Dict[str, str]] = {}
 
     for i in range(0, len(video_ids), 50):
@@ -790,7 +857,6 @@ with tab1:
         expander_label="YouTube APIキー（任意。未設定でも手動で公開日を指定できます）※コメント自動取得はAPIキー必須",
     )
 
-    # 入力方式（手動/自動）
     st.markdown("### 入力方式")
     input_mode = st.radio(
         "タイムスタンプ情報の取得方法",
@@ -809,7 +875,7 @@ with tab1:
             key="ts_manual_date_raw",
         )
 
-    # 既存入力（常に表示：自動取得後に微調整できるようにする）
+    # 既存入力欄（自動取得後も微調整できるよう常に表示）
     timestamps_input_ts = st.text_area(
         "2. 楽曲リスト（タイムスタンプ付き）",
         placeholder="例：\n0:35 曲名A / アーティスト名A\n6:23 曲名B - アーティスト名B\n1:10:05 曲名C by アーティスト名C",
@@ -826,7 +892,7 @@ with tab1:
             manual_date_ts = ""
             st.error("日付として解釈できませんでした。例: 2025/11/19, 11/19, 3月20日 などの形式で入力してください。")
 
-    # --- 自動取得UI ---
+    # ---- 自動取得UI ----
     if input_mode == "自動（コメントから取得）":
         st.markdown("### 🤖 コメントからタイムスタンプを自動取得")
 
@@ -835,15 +901,15 @@ with tab1:
         else:
             col_a1, col_a2 = st.columns([2, 2])
             with col_a1:
-                auto_order = st.selectbox(
+                st.selectbox(
                     "コメント取得順（候補の並び）",
                     ["relevance", "time"],
                     index=0,
-                    help="relevanceはピン留め/高評価コメントが上位に来やすい想定です。",
+                    help="relevanceは高評価コメントが上位に来やすい想定です。",
                     key="ts_auto_order",
                 )
             with col_a2:
-                auto_search_terms = st.text_input(
+                st.text_input(
                     "検索語（任意。入れるとコメントを絞れます）",
                     value="",
                     key="ts_auto_search_terms",
@@ -851,13 +917,13 @@ with tab1:
 
             col_a3, col_a4 = st.columns([2, 2])
             with col_a3:
-                auto_pages = st.slider(
+                st.slider(
                     "探索ページ数（多いほど重くなります）",
                     min_value=1, max_value=10, value=3, step=1,
                     key="ts_auto_pages",
                 )
             with col_a4:
-                auto_only_ts_lines = st.checkbox(
+                st.checkbox(
                     "タイムスタンプ行だけ抽出して貼り付ける（推奨）",
                     value=True,
                     key="ts_auto_only_ts_lines",
@@ -865,68 +931,31 @@ with tab1:
 
             col_btn1, col_btn2 = st.columns(2)
             with col_btn1:
-                auto_fetch = st.button("🤖 コメント候補を取得する", key="ts_auto_fetch")
-            with col_btn2:
-                auto_fetch_and_preview = st.button("🤖 取得→自動選択→プレビュー", key="ts_auto_fetch_preview")
-
-            def _run_preview_with_text(ts_text: str):
-                flip = st.session_state.get("flip_ts", False)
-                rows, preview, invalid, video_title = generate_rows(
-                    url, ts_text, TZ_NAME, api_key_ts, manual_date_ts, flip
+                st.button(
+                    "🤖 コメント候補を取得する",
+                    key="ts_auto_fetch",
+                    on_click=cb_fetch_candidates,
+                    kwargs={"do_autoselect_preview": False},
                 )
-                st.session_state["ts_preview_df"] = preview
-                st.session_state["ts_preview_invalid"] = invalid
-                st.session_state["ts_preview_title"] = video_title
-                return len(preview), len(invalid)
+            with col_btn2:
+                st.button(
+                    "🤖 取得→自動選択→プレビュー",
+                    key="ts_auto_fetch_preview",
+                    on_click=cb_fetch_candidates,
+                    kwargs={"do_autoselect_preview": True},
+                )
 
-            if auto_fetch or auto_fetch_and_preview:
-                if not url:
-                    st.error("まずURLを入力してください。")
-                elif not is_valid_youtube_url(url):
-                    st.error("有効なYouTube URLを入力してください。")
-                else:
-                    vid = extract_video_id(url)
-                    if not vid:
-                        st.error("URLからビデオIDを抽出できませんでした。")
-                    else:
-                        with st.spinner("コメントを取得しています..."):
-                            cands, err = fetch_timestamp_comment_candidates(
-                                video_id=vid,
-                                api_key=api_key_ts,
-                                order=st.session_state.get("ts_auto_order", "relevance"),
-                                search_terms=st.session_state.get("ts_auto_search_terms", ""),
-                                max_pages=int(st.session_state.get("ts_auto_pages", 3)),
-                            )
-                        if err:
-                            st.error(err)
-                        elif not cands:
-                            st.warning("タイムスタンプっぽいコメントが見つかりませんでした（コメント無効/未投稿/書式違いの可能性）。")
-                        else:
-                            st.session_state["ts_auto_candidates"] = cands
-                            st.success(f"候補を {len(cands)} 件見つけました。")
+            if st.session_state.get("ts_auto_err"):
+                st.error(st.session_state["ts_auto_err"])
+            if st.session_state.get("ts_auto_msg"):
+                st.success(st.session_state["ts_auto_msg"])
 
-                            # 自動プレビューの場合：最上位を採用
-                            if auto_fetch_and_preview:
-                                best = cands[0]
-                                flip = st.session_state.get("flip_ts", False)
-                                ts_text = best["text"]
-                                if st.session_state.get("ts_auto_only_ts_lines", True):
-                                    extracted = _extract_timestamp_lines(ts_text, flip)
-                                    ts_text = extracted if extracted else ts_text
-
-                                st.session_state["timestamps_input_ts"] = ts_text
-                                try:
-                                    ok, ng = _run_preview_with_text(ts_text)
-                                    st.success(f"自動選択でプレビュー生成しました：解析 {ok} 件 / 未解析 {ng} 件")
-                                except Exception as e:
-                                    st.error(f"プレビュー生成に失敗しました：{e}")
-
-            # 候補があれば選択UI
-            cands = st.session_state.get("ts_auto_candidates", [])
+            cands = st.session_state.get("ts_auto_candidates", []) or []
             if cands:
                 st.markdown("#### 候補を選んで貼り付ける")
                 labels = []
-                for i, c in enumerate(cands[:30], start=1):
+                shown = cands[:30]
+                for i, c in enumerate(shown, start=1):
                     head = (c["text"].splitlines()[0] if c["text"] else "").strip()
                     head = head[:60] + ("…" if len(head) > 60 else "")
                     owner_tag = "本人" if c.get("is_owner") else "外部"
@@ -934,38 +963,27 @@ with tab1:
 
                 picked = st.selectbox("コメント候補", labels, key="ts_auto_pick")
                 picked_idx = labels.index(picked)
-                picked_c = cands[picked_idx]
 
                 col_pick1, col_pick2 = st.columns(2)
                 with col_pick1:
-                    if st.button("この候補を貼り付ける", key="ts_auto_apply"):
-                        flip = st.session_state.get("flip_ts", False)
-                        ts_text = picked_c["text"]
-                        if st.session_state.get("ts_auto_only_ts_lines", True):
-                            extracted = _extract_timestamp_lines(ts_text, flip)
-                            ts_text = extracted if extracted else ts_text
-                        st.session_state["timestamps_input_ts"] = ts_text
-                        st.success("貼り付けました。必要ならそのまま下のプレビュー/CSV生成に進んでください。")
-                        st.rerun()
+                    st.button(
+                        "この候補を貼り付ける",
+                        key="ts_auto_apply",
+                        on_click=cb_apply_candidate,
+                        kwargs={"index": picked_idx, "do_preview": False},
+                    )
                 with col_pick2:
-                    if st.button("この候補でプレビュー生成", key="ts_auto_apply_preview"):
-                        flip = st.session_state.get("flip_ts", False)
-                        ts_text = picked_c["text"]
-                        if st.session_state.get("ts_auto_only_ts_lines", True):
-                            extracted = _extract_timestamp_lines(ts_text, flip)
-                            ts_text = extracted if extracted else ts_text
-                        st.session_state["timestamps_input_ts"] = ts_text
-                        try:
-                            ok, ng = _run_preview_with_text(ts_text)
-                            st.success(f"プレビュー生成しました：解析 {ok} 件 / 未解析 {ng} 件")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"プレビュー生成に失敗しました：{e}")
+                    st.button(
+                        "この候補でプレビュー生成",
+                        key="ts_auto_apply_preview",
+                        on_click=cb_apply_candidate,
+                        kwargs={"index": picked_idx, "do_preview": True},
+                    )
 
                 with st.expander("選択中コメント（全文）"):
-                    st.text(picked_c["text"])
+                    st.text(shown[picked_idx]["text"])
 
-    # --- 既存：左右反転・プレビュー・CSV ---
+    # ---- 既存：左右反転・プレビュー・CSV ----
     c1, c2 = st.columns(2)
     with c1:
         st.toggle("左右反転", value=False, key="flip_ts")
