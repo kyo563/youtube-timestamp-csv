@@ -887,8 +887,8 @@ st.text_input(
     "YouTube APIキー（任意）",
     key="shared_api_key",
     type="password",
-    placeholder="AIza…",
-    help="設定すると全タブで共通利用します。シークレットに YT_API_KEY があれば初期値に適用されます。",
+    placeholder="PASS",
+    help="設定すると全タブで共通利用します。",
 )
 
 # ==============================
@@ -949,7 +949,7 @@ with tab1:
         st.markdown("### 🤖 コメントからタイムスタンプを自動取得")
 
         if not api_key_ts:
-            st.warning("コメント自動取得はYouTube Data API v3 のAPIキーが必須です。APIキーを設定してください。")
+            st.warning("コメント自動取得はYouTube Data API v3 のAPIキーが必須です。")
         else:
             col_a1, col_a2 = st.columns([2, 2])
             with col_a1:
@@ -1126,7 +1126,7 @@ with tab2:
     st.subheader("ショート → CSV")
     st.write(
         "チャンネルURLからショート動画を取得し、タイトルから **楽曲名/アーティスト名** を推定して "
-        "CSV（アーティスト名, 楽曲名, ショート動画）を生成します。3列目は**公開日(yyyymmdd)+元動画タイトル（リンク付き）**です。"
+        "CSV（アーティスト名, 楽曲名, ショート動画）を生成します。"
     )
 
     channel_url = st.text_input(
@@ -1187,7 +1187,7 @@ with tab2:
                         ymd_map[vid] = None
 
                 if not video_ids:
-                    st.error("ショート動画が見つかりませんでした。URLや権限、取得件数を見直してください。")
+                    st.error("ショート動画が見つかりませんでした。")
                     st.stop()
 
                 rows = [["アーティスト名", "楽曲名", "ショート動画"]]
@@ -1227,10 +1227,9 @@ with tab2:
 
 # ---------------- タブ3 ----------------
 with tab3:
-    st.subheader("最新動画（動画/ショート/ライブ）→CSV（改）")
+    st.subheader("投稿動画情報取得")
     st.write(
-        "チャンネルの最新n件、またはプレイリスト内の動画について、**動画タイトル / 動画URL / 公開日(yyyymmdd)** をCSV出力します。"
-        "取得は **search.list(order=date) / playlistItems.list → videos.list** のみで完結します。"
+        "チャンネルの最新n件、またはプレイリスト内の動画について動画情報をCSV出力します。"
     )
 
     latest_mode = st.radio(
@@ -1278,7 +1277,7 @@ with tab3:
 
     if run_latest:
         if not api_key_latest:
-            st.error("このタブはYouTube Data API v3のみで実装しているため、APIキーが必須です。")
+            st.error("このタブはAPIキーが必須です。")
             st.stop()
 
         keep_playlist_order = latest_mode == "プレイリスト" and sort_choice == "プレイリスト登録順を保持（ソートしない）"
