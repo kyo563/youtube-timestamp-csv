@@ -16,7 +16,7 @@ import pandas as pd
 st.set_page_config(page_title="タイムスタンプCSV出力", layout="centered")
 
 st.title("YouTube CSVツール")
-st.write("タイムスタンプCSV生成とショート動画CSV生成")
+st.write("タイムスタンプCSV生成とショート動画CSV生成、最新動画一覧CSV生成")
 
 # 表示名の区切り（例: 20250101 My Video Title）
 DATE_TITLE_SEPARATOR = " "
@@ -216,7 +216,7 @@ def fetch_best_display_date_and_sources(video_id: str, api_key: str, tz_name: st
     try:
         url = "https://www.googleapis.com/youtube/v3/videos"
         params = {"part": "snippet,liveStreamingDetails", "id": video_id, "key": api_key}
-        r = requests.get(url, params=params, timeout=6)
+        r = requests.get(url, params=params, timeout=8)
         if r.status_code != 200:
             return result
         items = (r.json() or {}).get("items", [])
@@ -323,36 +323,45 @@ def extract_channel_id_from_url(url: str, api_key: str) -> Optional[str]:
     try:
         pr = urllib.parse.urlparse(url)
         path = pr.path or ""
+
         # /channel/UCxxxx
         m = re.search(r"/channel/(UC[\w-]+)", path)
         if m:
             return m.group(1)
+
+        if not api_key:
+            return None
+
         # /@handle
         m = re.search(r"/@([^/?#]+)", path)
-        if m and api_key:
+        if m:
             handle = m.group(1)
-            resp = requests.get(
-                "https://www.googleapis.com/youtube/v3/search",
-                params={"part": "snippet", "type": "channel", "q": handle, "maxResults": 5, "key": api_key},
-                timeout=8,
-            ).json()
-            for it in resp.get("items", []):
-                ch_id = it.get("id", {}).get("channelId")
-                if ch_id:
-                    return ch_id
-        # /c/ や /user/ のケースも検索で対応（API前提）
-        if api_key:
-            candidate = [p for p in path.split("/") if p][-1]
-            if candidate:
+            # できるだけ当たりやすいように @付きと無しを両方試す
+            for q in (f"@{handle}", handle):
                 resp = requests.get(
                     "https://www.googleapis.com/youtube/v3/search",
-                    params={"part": "snippet", "type": "channel", "q": candidate, "maxResults": 5, "key": api_key},
-                    timeout=8,
+                    params={"part": "snippet", "type": "channel", "q": q, "maxResults": 5, "key": api_key},
+                    timeout=10,
                 ).json()
                 for it in resp.get("items", []):
                     ch_id = it.get("id", {}).get("channelId")
                     if ch_id:
                         return ch_id
+            return None
+
+        # /c/ や /user/ のケースも検索で対応（API前提）
+        candidate = [p for p in path.split("/") if p][-1] if path else ""
+        if candidate:
+            resp = requests.get(
+                "https://www.googleapis.com/youtube/v3/search",
+                params={"part": "snippet", "type": "channel", "q": candidate, "maxResults": 5, "key": api_key},
+                timeout=10,
+            ).json()
+            for it in resp.get("items", []):
+                ch_id = it.get("id", {}).get("channelId")
+                if ch_id:
+                    return ch_id
+
         return None
     except Exception:
         return None
@@ -370,7 +379,7 @@ def list_channel_videos(channel_id: str, api_key: str, limit: int = 50) -> List[
         }
         if token:
             params["pageToken"] = token
-        data = requests.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=8).json()
+        data = requests.get("https://www.googleapis.com/youtube/v3/search", params=params, timeout=10).json()
         for it in data.get("items", []):
             vid = it.get("id", {}).get("videoId")
             if vid:
@@ -398,7 +407,7 @@ def fetch_video_meta(video_ids: List[str], api_key: str):
         data = requests.get(
             "https://www.googleapis.com/youtube/v3/videos",
             params={"part": "snippet,contentDetails", "id": chunk, "key": api_key},
-            timeout=8,
+            timeout=10,
         ).json()
         for it in data.get("items", []):
             vid = it.get("id")
@@ -470,7 +479,7 @@ def scrape_shorts_ids_from_web(url: str, limit: int = 50) -> List[str]:
             target = base + m.group(0) + "/shorts"
         else:
             target = base + pr.path.rstrip("/") + "/shorts"
-        html = requests.get(target, timeout=8, headers={"User-Agent": "Mozilla/5.0"}).text
+        html = requests.get(target, timeout=10, headers={"User-Agent": "Mozilla/5.0"}).text
         vids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html)
         seen = set()
         uniq = []
@@ -485,9 +494,113 @@ def scrape_shorts_ids_from_web(url: str, limit: int = 50) -> List[str]:
         return []
 
 # ==============================
+# タブ3：最新動画一覧 → CSV（YouTube Data API v3のみ）
+# ==============================
+@st.cache_data(show_spinner=False, ttl=600)
+def fetch_uploads_playlist_id(channel_id: str, api_key: str) -> Optional[str]:
+    """
+    channels.list(part=contentDetails) から uploads プレイリストIDを取得します。
+    """
+    try:
+        r = requests.get(
+            "https://www.googleapis.com/youtube/v3/channels",
+            params={"part": "contentDetails", "id": channel_id, "key": api_key},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return None
+        items = (r.json() or {}).get("items", [])
+        if not items:
+            return None
+        cd = items[0].get("contentDetails", {}) or {}
+        rp = cd.get("relatedPlaylists", {}) or {}
+        return rp.get("uploads")
+    except Exception:
+        return None
+
+@st.cache_data(show_spinner=False, ttl=600)
+def list_latest_video_ids_from_uploads(uploads_playlist_id: str, api_key: str, limit: int) -> List[str]:
+    """
+    playlistItems.list(part=contentDetails) で uploads プレイリストの先頭から videoId を取得します。
+    返却順は「最新→過去」になります。
+    """
+    ids: List[str] = []
+    token = None
+    while len(ids) < limit:
+        params = {
+            "part": "contentDetails",
+            "playlistId": uploads_playlist_id,
+            "maxResults": 50,
+            "key": api_key,
+        }
+        if token:
+            params["pageToken"] = token
+        r = requests.get("https://www.googleapis.com/youtube/v3/playlistItems", params=params, timeout=10)
+        if r.status_code != 200:
+            break
+        data = r.json() or {}
+        for it in data.get("items", []):
+            cd = it.get("contentDetails", {}) or {}
+            vid = cd.get("videoId")
+            if vid:
+                ids.append(vid)
+                if len(ids) >= limit:
+                    break
+        token = data.get("nextPageToken")
+        if not token:
+            break
+    return ids[:limit]
+
+@st.cache_data(show_spinner=False, ttl=600)
+def fetch_titles_and_best_dates(video_ids: List[str], api_key: str, tz_name: str) -> Dict[str, Dict[str, str]]:
+    """
+    videos.list(part=snippet,liveStreamingDetails) をまとめて取得し、
+    title と 公開日(yyyymmdd) を返します。
+    公開日は優先順位: actualStartTime → scheduledStartTime → publishedAt です。
+    """
+    out: Dict[str, Dict[str, str]] = {}
+    for i in range(0, len(video_ids), 50):
+        chunk = ",".join(video_ids[i:i+50])
+        r = requests.get(
+            "https://www.googleapis.com/youtube/v3/videos",
+            params={"part": "snippet,liveStreamingDetails", "id": chunk, "key": api_key},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            continue
+        data = r.json() or {}
+        for it in data.get("items", []):
+            vid = it.get("id")
+            snip = it.get("snippet", {}) or {}
+            live = it.get("liveStreamingDetails", {}) or {}
+
+            title = (snip.get("title") or "").strip()
+
+            publishedAt = snip.get("publishedAt")
+            actualStartTime = live.get("actualStartTime")
+            scheduledStartTime = live.get("scheduledStartTime")
+
+            published_local = iso_utc_to_tz_yyyymmdd(publishedAt, tz_name) if publishedAt else None
+            actual_local = iso_utc_to_tz_yyyymmdd(actualStartTime, tz_name) if actualStartTime else None
+            scheduled_local = iso_utc_to_tz_yyyymmdd(scheduledStartTime, tz_name) if scheduledStartTime else None
+
+            if actual_local:
+                ymd = actual_local
+                src = "actualStartTime"
+            elif scheduled_local:
+                ymd = scheduled_local
+                src = "scheduledStartTime"
+            else:
+                ymd = published_local or ""
+                src = "publishedAt" if published_local else ""
+
+            out[vid] = {"title": title, "yyyymmdd": ymd, "date_source": src}
+    return out
+
+# ==============================
 # タブレイアウト
 # ==============================
-tab1, tab2 = st.tabs(["⏱ タイムスタンプCSV", "🎬 Shorts→CSV"])
+tab1, tab2, tab3 = st.tabs(["⏱ タイムスタンプCSV", "🎬 Shorts→CSV", "🆕 最新動画→CSV"])
 
 # ---------------- タブ1：タイムスタンプCSVジェネレーター ----------------
 with tab1:
@@ -576,7 +689,7 @@ with tab1:
                 )
                 csv_content = to_csv(rows)
 
-                # ファイル名サニタイズ（共通関数にしてもOKですがここだけなのでインライン）
+                # ファイル名サニタイズ
                 download_name = re.sub(r'[\\/:*?"<>|\x00-\x1F]', "_", video_title or "").strip().strip(".") or "youtube_song_list"
                 if len(download_name) > 100:
                     download_name = download_name[:100]
@@ -735,3 +848,84 @@ with tab2:
 
             except Exception as e:
                 st.error(f"エラー: {e}")
+
+# ---------------- タブ3：最新動画 → CSV（動画/ショート/ライブ混在、API v3のみ、公開日yyyymmdd付き） ----------------
+with tab3:
+    st.subheader("最新動画（動画/ショート/ライブ）→CSV")
+    st.write("チャンネルの最新n件について、**動画タイトル / 動画URL / 公開日(yyyymmdd)** をCSV出力します（YouTube Data API v3のみ）。")
+
+    latest_channel_url = st.text_input(
+        "チャンネルのURL（/channel/UC… または /@handle）",
+        placeholder="https://www.youtube.com/@Google",
+        key="latest_channel_url",
+    )
+
+    latest_n = st.slider(
+        "取得件数（n）",
+        min_value=5,
+        max_value=500,
+        value=50,
+        step=5,
+        key="latest_n",
+    )
+
+    api_key_latest = resolve_api_key(
+        default_key=GLOBAL_API_KEY,
+        input_state_key="latest_api_key",
+        expander_label="YouTube APIキー（必須）",
+    )
+
+    run_latest = st.button("実行（最新動画取得→CSV生成）", key="latest_run")
+
+    if run_latest:
+        if not latest_channel_url:
+            st.error("チャンネルURLを入力してください。")
+            st.stop()
+        if not api_key_latest:
+            st.error("このタブはYouTube Data API v3のみで実装しているため、APIキーが必須です。")
+            st.stop()
+
+        ch_id = extract_channel_id_from_url(latest_channel_url, api_key_latest)
+        if not ch_id:
+            st.error("チャンネルIDを特定できませんでした（/channel/UC… 形式か、@handle の綴りを確認してください）。")
+            st.stop()
+
+        st.info(f"チャンネルID：{ch_id}")
+
+        uploads_pid = fetch_uploads_playlist_id(ch_id, api_key_latest)
+        if not uploads_pid:
+            st.error("uploadsプレイリストIDを取得できませんでした（APIキー権限やクォータを確認してください）。")
+            st.stop()
+
+        video_ids = list_latest_video_ids_from_uploads(uploads_pid, api_key_latest, latest_n)
+        if not video_ids:
+            st.error("最新動画を取得できませんでした。")
+            st.stop()
+
+        details_map = fetch_titles_and_best_dates(video_ids, api_key_latest, TZ_NAME)
+
+        rows = [["動画タイトル", "動画URL", "公開日(yyyymmdd)"]]
+        preview = []
+        for vid in video_ids:
+            d = details_map.get(vid, {})
+            title = d.get("title", "") or ""
+            ymd = d.get("yyyymmdd", "") or ""
+            url = f"https://www.youtube.com/watch?v={vid}"
+            rows.append([title, url, ymd])
+            preview.append({
+                "yyyymmdd": ymd,
+                "title": title,
+                "url": url,
+                "date_source": d.get("date_source", ""),
+            })
+
+        st.success(f"取得完了：{len(preview)} 件")
+        st.dataframe(pd.DataFrame(preview), use_container_width=True)
+
+        csv_text = to_csv(rows)
+        st.download_button(
+            label="CSVをダウンロード",
+            data=csv_text.encode("utf-8-sig"),
+            file_name="latest_videos.csv",
+            mime="text/csv",
+        )
