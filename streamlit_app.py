@@ -699,7 +699,9 @@ def split_artist_song_from_title(title: str) -> Tuple[str, str]:
     q = re.search(r'[「『“"](.+?)[」』”"]', t)
     if q:
         song = q.group(1).strip()
-        artist = (t[:q.start()] + t[q.end():]).strip(" -/byBY")
+        artist = (t[:q.start()] + t[q.end():]).strip()
+        artist = re.sub(r"^(?:-|—|–|―|－|/|／|by\s+)+", "", artist, flags=re.IGNORECASE)
+        artist = re.sub(r"(?:\s+by|[-—–―－/／])$", "", artist, flags=re.IGNORECASE)
         artist = re.sub(r"\s+", " ", artist).strip()
         return artist if artist else "N/A", song if song else "N/A"
 
