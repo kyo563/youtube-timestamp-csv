@@ -1119,7 +1119,7 @@ tab1, tab2, tab3 = st.tabs(["⏱ タイムスタンプCSV", "🎬 Shorts→CSV",
 # ---------------- タブ1 ----------------
 with tab1:
     st.subheader("タイムスタンプCSVジェネレーター")
-    st.write("入力→確認→出力の順で進める、4ステップ構成です。")
+    st.write("上から順に進めるだけで完了する、4ステップ構成です。")
 
     api_key_ts = resolve_api_key()
     flow_steps = [
@@ -1129,6 +1129,7 @@ with tab1:
         "4) CSV生成・ダウンロード",
     ]
     st.info("\n".join(flow_steps))
+    st.caption("迷ったら、いま見えているステップ番号の操作だけ実行してください。")
 
     target_mode = st.radio(
         "1. 対象動画の指定方法",
@@ -1219,6 +1220,7 @@ with tab1:
         st.caption(f"有効URL: {len(parsed_urls)} 件（重複は自動除外）")
 
     st.markdown("### 2. タイムスタンプを用意")
+    st.caption("手動入力かコメント自動取得のどちらかを選び、最後に入力欄の内容を確認します。")
     input_mode = st.radio(
         "入力方法",
         ["手動（貼り付け）", "自動（コメントから取得）"],
@@ -1237,7 +1239,16 @@ with tab1:
 
     if input_mode == "自動（コメントから取得）":
         st.markdown("#### コメントから候補を取り込む")
-        st.caption("この手順で入力欄に反映されます。反映後は入力欄を直接編集して調整できます。")
+        st.markdown(
+            "\n".join([
+                "**操作手順（自動取得）**",
+                "- 2-a. 取得条件を設定",
+                "- 2-b. コメント候補を取得",
+                "- 2-c. 候補を選んで入力欄に反映",
+                "- 2-d. 入力欄を直接編集して微調整",
+            ])
+        )
+        st.caption("反映後は入力欄を直接編集できます。")
 
         if not api_key_ts:
             st.warning("コメント自動取得にはAPIキーが必要です。")
@@ -1263,7 +1274,7 @@ with tab1:
             with col_a4:
                 st.checkbox("タイムスタンプ行のみ抽出", value=True, key="ts_auto_only_ts_lines")
 
-            st.button("2-A. コメント候補を取得", key="ts_fetch_comments_common", on_click=cb_fetch_comment_candidates_by_mode)
+            st.button("2-b. コメント候補を取得", key="ts_fetch_comments_common", on_click=cb_fetch_comment_candidates_by_mode)
 
             if target_mode == "単体":
                 if st.session_state.get("ts_auto_err"):
@@ -1281,11 +1292,11 @@ with tab1:
                         owner_tag = "本人" if c.get("is_owner") else "外部"
                         labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {owner_tag} / {head}")
 
-                    picked = st.selectbox("2-B. 反映する候補", labels, key="ts_auto_pick")
+                    picked = st.selectbox("2-c. 反映する候補", labels, key="ts_auto_pick")
                     picked_idx = labels.index(picked)
 
                     st.button(
-                        "2-C. この候補を入力欄へ反映",
+                        "2-c. この候補を入力欄へ反映",
                         key="ts_auto_apply",
                         on_click=cb_apply_candidate,
                         kwargs={"index": picked_idx, "do_preview": False},
@@ -1341,7 +1352,7 @@ with tab1:
 
     if target_mode == "単体":
         timestamps_input_ts = st.text_area(
-            "タイムスタンプ付き楽曲リスト",
+            "2-d. タイムスタンプ付き楽曲リスト（最終確認・直接編集）",
             placeholder="例：\n0:35 曲名A / アーティスト名A\n6:23 曲名B - アーティスト名B\n1:10:05 曲名C by アーティスト名C",
             height=220,
             key="timestamps_input_ts",
