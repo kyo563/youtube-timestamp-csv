@@ -1119,7 +1119,6 @@ tab1, tab2, tab3 = st.tabs(["⏱ タイムスタンプCSV", "🎬 Shorts→CSV",
 # ---------------- タブ1 ----------------
 with tab1:
     st.subheader("タイムスタンプCSVジェネレーター")
-    st.write("上から順に進めるだけで完了する、4ステップ構成です。")
 
     api_key_ts = resolve_api_key()
     flow_steps = [
@@ -1138,7 +1137,6 @@ with tab1:
         key="ts_target_mode",
         on_change=cb_on_target_mode_change,
     )
-    st.caption("URL直接入力は廃止し、チャンネルの最新動画から選択する方式に統一しています。")
     st.text_input(
         "チャンネルURLまたはチャンネルID（UC... / @handle / URL）",
         placeholder="https://www.youtube.com/@example または UCxxxxxxxxxxxxxxxxxxxxxx",
@@ -1398,7 +1396,6 @@ with tab1:
                 st.error(f"エラー: {e}")
 
     st.markdown("### 4. CSV出力")
-    st.caption("出力前に修正したい場合は、ステップ2に戻って編集 → ステップ3で再確認してください。")
 
     csv_clicked = st.button("4. CSVを生成してダウンロードを有効化", key="csv_ts_common")
     if csv_clicked:
