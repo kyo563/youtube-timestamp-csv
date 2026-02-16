@@ -674,6 +674,73 @@ def cb_fetch_multi_video_candidates() -> None:
     st.session_state.pop("ts_multi_err", None)
 
 
+def cb_fetch_latest_multi_video_candidates() -> None:
+    api_key = _get_ts_api_key()
+    if not api_key:
+        st.session_state["ts_multi_latest_err"] = "最新動画取得にはAPIキーが必要です。"
+        st.session_state["ts_multi_latest_candidates"] = []
+        return
+
+    channel_url = (st.session_state.get("ts_multi_channel_url", "") or "").strip()
+    if not channel_url:
+        st.session_state["ts_multi_latest_err"] = "チャンネルURLを入力してください。"
+        st.session_state["ts_multi_latest_candidates"] = []
+        return
+
+    channel_id = resolve_channel_id_from_url(channel_url, api_key)
+    if not channel_id:
+        st.session_state["ts_multi_latest_err"] = "チャンネルIDを特定できませんでした。URLを確認してください。"
+        st.session_state["ts_multi_latest_candidates"] = []
+        return
+
+    latest_n = int(st.session_state.get("ts_multi_latest_n", 10))
+    video_ids = list_latest_video_ids_mixed(channel_id, api_key, latest_n)
+    if not video_ids:
+        st.session_state["ts_multi_latest_err"] = "最新動画を取得できませんでした。"
+        st.session_state["ts_multi_latest_candidates"] = []
+        return
+
+    details = fetch_titles_and_best_dates_bulk(video_ids, api_key, TZ_NAME)
+    candidates = []
+    for vid in video_ids:
+        meta = details.get(vid, {})
+        title = meta.get("title") or f"動画 {vid}"
+        ymd = meta.get("date") or ""
+        candidates.append(
+            {
+                "videoId": vid,
+                "url": f"https://www.youtube.com/watch?v={vid}",
+                "title": title,
+                "yyyymmdd": ymd,
+            }
+        )
+
+    st.session_state["ts_multi_latest_candidates"] = candidates
+    st.session_state["ts_multi_latest_selected_ids"] = [c["videoId"] for c in candidates]
+    st.session_state["ts_multi_latest_msg"] = f"最新動画 {len(candidates)} 件を取得しました。"
+    st.session_state.pop("ts_multi_latest_err", None)
+
+
+def cb_apply_latest_multi_selection() -> None:
+    candidates = st.session_state.get("ts_multi_latest_candidates", []) or []
+    selected_ids = st.session_state.get("ts_multi_latest_selected_ids", []) or []
+
+    selected_urls = []
+    selected_set = set(selected_ids)
+    for c in candidates:
+        vid = c.get("videoId")
+        if vid in selected_set:
+            selected_urls.append(c.get("url", ""))
+
+    if not selected_urls:
+        st.session_state["ts_multi_latest_err"] = "対象動画を1件以上選択してください。"
+        return
+
+    st.session_state["ts_multi_urls"] = "\n".join(selected_urls)
+    st.session_state["ts_multi_latest_msg"] = f"{len(selected_urls)} 件のURLを反映しました。"
+    st.session_state.pop("ts_multi_latest_err", None)
+
+
 # ==============================
 # タブ2：Shorts → CSV 用関数
 # ==============================
@@ -1039,6 +1106,68 @@ with tab1:
         )
     else:
         url = ""
+        multi_source_mode = st.radio(
+            "複数動画の指定方法",
+            ["URLを直接入力", "チャンネルの最新動画から選択"],
+            horizontal=True,
+            key="ts_multi_source_mode",
+        )
+
+        if multi_source_mode == "チャンネルの最新動画から選択":
+            st.caption("YouTube APIで最新動画を取得し、対象動画を選んでURL欄へ反映できます。")
+            st.text_input(
+                "チャンネルURL（/channel/UC... または /@handle）",
+                placeholder="https://www.youtube.com/@example",
+                key="ts_multi_channel_url",
+            )
+            st.slider(
+                "取得する最新動画件数",
+                min_value=3,
+                max_value=50,
+                value=10,
+                step=1,
+                key="ts_multi_latest_n",
+            )
+            st.button(
+                "1-A. 最新動画を取得",
+                key="ts_multi_fetch_latest",
+                on_click=cb_fetch_latest_multi_video_candidates,
+            )
+
+            if st.session_state.get("ts_multi_latest_err"):
+                st.error(st.session_state["ts_multi_latest_err"])
+            if st.session_state.get("ts_multi_latest_msg"):
+                st.success(st.session_state["ts_multi_latest_msg"])
+
+            latest_candidates = st.session_state.get("ts_multi_latest_candidates", []) or []
+            if latest_candidates:
+                label_to_id: Dict[str, str] = {}
+                options = []
+                for c in latest_candidates:
+                    title = (c.get("title") or "").strip()
+                    ymd = c.get("yyyymmdd") or "----"
+                    vid = c.get("videoId") or ""
+                    label = f"{ymd} | {title} ({vid})"
+                    options.append(label)
+                    label_to_id[label] = vid
+
+                current_ids = st.session_state.get("ts_multi_latest_selected_ids", []) or []
+                default_labels = [label for label in options if label_to_id.get(label) in current_ids]
+
+                picked_labels = st.multiselect(
+                    "1-B. 対象動画を選択（複数可）",
+                    options,
+                    default=default_labels,
+                    key="ts_multi_latest_selected_labels",
+                )
+                st.session_state["ts_multi_latest_selected_ids"] = [label_to_id[l] for l in picked_labels if l in label_to_id]
+
+                st.button(
+                    "1-C. 選択動画をURL欄に反映",
+                    key="ts_multi_apply_latest",
+                    on_click=cb_apply_latest_multi_selection,
+                )
+
         st.text_area(
             "YouTube動画URL（1行に1つ）",
             placeholder="https://www.youtube.com/watch?v=xxxxxxxxxxx\nhttps://youtu.be/yyyyyyyyyyy",
