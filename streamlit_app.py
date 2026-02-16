@@ -741,6 +741,18 @@ def cb_apply_latest_multi_selection() -> None:
     st.session_state.pop("ts_multi_latest_err", None)
 
 
+def cb_on_target_mode_change() -> None:
+    if st.session_state.get("ts_target_mode") == "複数URL":
+        st.session_state["ts_multi_source_mode"] = "チャンネルの最新動画から選択"
+
+
+def cb_fetch_comment_candidates_by_mode() -> None:
+    if st.session_state.get("ts_target_mode") == "単体URL":
+        cb_fetch_candidates(do_autoselect_preview=False)
+    else:
+        cb_fetch_multi_video_candidates()
+
+
 # ==============================
 # タブ2：Shorts → CSV 用関数
 # ==============================
@@ -1111,6 +1123,7 @@ with tab1:
         ["単体URL", "複数URL"],
         horizontal=True,
         key="ts_target_mode",
+        on_change=cb_on_target_mode_change,
     )
 
     if target_mode == "単体URL":
@@ -1123,8 +1136,9 @@ with tab1:
         url = ""
         multi_source_mode = st.radio(
             "複数動画の指定方法",
-            ["URLを直接入力", "チャンネルの最新動画から選択"],
+            ["チャンネルの最新動画から選択", "URLを直接入力"],
             horizontal=True,
+            index=0,
             key="ts_multi_source_mode",
         )
 
@@ -1210,7 +1224,7 @@ with tab1:
             key="ts_manual_date_raw",
         )
 
-    if input_mode == "自動（コメントから取得）" and target_mode == "単体URL":
+    if input_mode == "自動（コメントから取得）":
         st.markdown("#### コメントから候補を取り込む")
         st.caption("この手順で入力欄に反映されます。反映後は入力欄を直接編集して調整できます。")
 
@@ -1229,40 +1243,81 @@ with tab1:
             with col_a4:
                 st.checkbox("タイムスタンプ行のみ抽出", value=True, key="ts_auto_only_ts_lines")
 
-            st.button(
-                "2-A. コメント候補を取得",
-                key="ts_auto_fetch",
-                on_click=cb_fetch_candidates,
-                kwargs={"do_autoselect_preview": False},
-            )
+            st.button("2-A. コメント候補を取得", key="ts_fetch_comments_common", on_click=cb_fetch_comment_candidates_by_mode)
 
-            if st.session_state.get("ts_auto_err"):
-                st.error(st.session_state["ts_auto_err"])
-            if st.session_state.get("ts_auto_msg"):
-                st.success(st.session_state["ts_auto_msg"])
+            if target_mode == "単体URL":
+                if st.session_state.get("ts_auto_err"):
+                    st.error(st.session_state["ts_auto_err"])
+                if st.session_state.get("ts_auto_msg"):
+                    st.success(st.session_state["ts_auto_msg"])
 
-            cands = st.session_state.get("ts_auto_candidates", []) or []
-            if cands:
-                labels = []
-                shown = cands[:30]
-                for i, c in enumerate(shown, start=1):
-                    head = (c["text"].splitlines()[0] if c["text"] else "").strip()
-                    head = head[:60] + ("…" if len(head) > 60 else "")
-                    owner_tag = "本人" if c.get("is_owner") else "外部"
-                    labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {owner_tag} / {head}")
+                cands = st.session_state.get("ts_auto_candidates", []) or []
+                if cands:
+                    labels = []
+                    shown = cands[:30]
+                    for i, c in enumerate(shown, start=1):
+                        head = (c["text"].splitlines()[0] if c["text"] else "").strip()
+                        head = head[:60] + ("…" if len(head) > 60 else "")
+                        owner_tag = "本人" if c.get("is_owner") else "外部"
+                        labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {owner_tag} / {head}")
 
-                picked = st.selectbox("2-B. 反映する候補", labels, key="ts_auto_pick")
-                picked_idx = labels.index(picked)
+                    picked = st.selectbox("2-B. 反映する候補", labels, key="ts_auto_pick")
+                    picked_idx = labels.index(picked)
 
-                st.button(
-                    "2-C. この候補を入力欄へ反映",
-                    key="ts_auto_apply",
-                    on_click=cb_apply_candidate,
-                    kwargs={"index": picked_idx, "do_preview": False},
-                )
+                    st.button(
+                        "2-C. この候補を入力欄へ反映",
+                        key="ts_auto_apply",
+                        on_click=cb_apply_candidate,
+                        kwargs={"index": picked_idx, "do_preview": False},
+                    )
 
-                with st.expander("選択中コメント（全文）"):
-                    st.text(shown[picked_idx]["text"])
+                    with st.expander("選択中コメント（全文）"):
+                        st.text(shown[picked_idx]["text"])
+            else:
+                if st.session_state.get("ts_multi_err"):
+                    st.error(st.session_state["ts_multi_err"])
+                if st.session_state.get("ts_multi_msg"):
+                    st.success(st.session_state["ts_multi_msg"])
+
+                items = st.session_state.get("ts_multi_items", {}) or {}
+                ordered_ids = st.session_state.get("ts_multi_order", []) or []
+                for vid in ordered_ids:
+                    it = items.get(vid) or {}
+                    vurl = it.get("url") or f"https://www.youtube.com/watch?v={vid}"
+                    with st.expander(f"動画 {vid}"):
+                        st.caption(vurl)
+                        if it.get("error"):
+                            st.warning(it["error"])
+                            continue
+
+                        cands = it.get("candidates", []) or []
+                        if cands:
+                            labels = []
+                            for i, c in enumerate(cands[:20], start=1):
+                                head = (c.get("text", "").splitlines()[0] if c.get("text") else "").strip()
+                                head = head[:60] + ("…" if len(head) > 60 else "")
+                                labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {head}")
+                            picked = st.selectbox(f"候補（{vid}）", labels, key=f"ts_multi_pick_{vid}")
+                            picked_idx = labels.index(picked)
+                            if st.button(f"この候補を採用（{vid}）", key=f"ts_multi_apply_{vid}"):
+                                picked_text = cands[picked_idx].get("text", "")
+                                if st.session_state.get("ts_auto_only_ts_lines", True):
+                                    extracted = _extract_timestamp_lines(picked_text, st.session_state.get("flip_ts", False))
+                                    if extracted:
+                                        picked_text = extracted
+                                it["applied_text"] = picked_text
+                                items[vid] = it
+                                st.session_state["ts_multi_items"] = items
+
+                        edited = st.text_area(
+                            f"採用テキスト（{vid}）",
+                            value=it.get("applied_text", ""),
+                            height=140,
+                            key=f"ts_multi_text_{vid}",
+                        )
+                        it["applied_text"] = edited
+                        items[vid] = it
+                st.session_state["ts_multi_items"] = items
 
     if target_mode == "単体URL":
         timestamps_input_ts = st.text_area(
@@ -1273,56 +1328,6 @@ with tab1:
         )
     else:
         timestamps_input_ts = ""
-        if input_mode == "自動（コメントから取得）":
-            st.button(
-                "2-A. 複数動画のコメント候補を取得",
-                key="ts_multi_fetch",
-                on_click=cb_fetch_multi_video_candidates,
-            )
-            if st.session_state.get("ts_multi_err"):
-                st.error(st.session_state["ts_multi_err"])
-            if st.session_state.get("ts_multi_msg"):
-                st.success(st.session_state["ts_multi_msg"])
-
-            items = st.session_state.get("ts_multi_items", {}) or {}
-            ordered_ids = st.session_state.get("ts_multi_order", []) or []
-            for vid in ordered_ids:
-                it = items.get(vid) or {}
-                vurl = it.get("url") or f"https://www.youtube.com/watch?v={vid}"
-                with st.expander(f"動画 {vid}"):
-                    st.caption(vurl)
-                    if it.get("error"):
-                        st.warning(it["error"])
-                        continue
-
-                    cands = it.get("candidates", []) or []
-                    if cands:
-                        labels = []
-                        for i, c in enumerate(cands[:20], start=1):
-                            head = (c.get("text", "").splitlines()[0] if c.get("text") else "").strip()
-                            head = head[:60] + ("…" if len(head) > 60 else "")
-                            labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {head}")
-                        picked = st.selectbox(f"候補（{vid}）", labels, key=f"ts_multi_pick_{vid}")
-                        picked_idx = labels.index(picked)
-                        if st.button(f"この候補を採用（{vid}）", key=f"ts_multi_apply_{vid}"):
-                            picked_text = cands[picked_idx].get("text", "")
-                            if st.session_state.get("ts_auto_only_ts_lines", True):
-                                extracted = _extract_timestamp_lines(picked_text, st.session_state.get("flip_ts", False))
-                                if extracted:
-                                    picked_text = extracted
-                            it["applied_text"] = picked_text
-                            items[vid] = it
-                            st.session_state["ts_multi_items"] = items
-
-                    edited = st.text_area(
-                        f"採用テキスト（{vid}）",
-                        value=it.get("applied_text", ""),
-                        height=140,
-                        key=f"ts_multi_text_{vid}",
-                    )
-                    it["applied_text"] = edited
-                    items[vid] = it
-            st.session_state["ts_multi_items"] = items
 
     if not api_key_ts and manual_date_raw_ts:
         normalized = normalize_manual_date_input(manual_date_raw_ts, TZ_NAME)
@@ -1364,36 +1369,34 @@ with tab1:
     st.markdown("### 4. CSV出力")
     st.caption("出力前に修正したい場合は、ステップ2に戻って編集 → ステップ3で再確認してください。")
 
-    csv_clicked = st.button("4. CSVを生成してダウンロードを有効化", key="csv_ts")
-    if csv_clicked and target_mode == "単体URL":
-        timestamps_text = st.session_state.get("timestamps_input_ts", "")
-        flip = st.session_state.get("flip_ts", False)
-        if not url or not timestamps_text:
-            st.error("URLと楽曲リストを入力してください。")
-        elif not is_valid_youtube_url(url):
-            st.error("有効なYouTube URLを入力してください。")
+    csv_clicked = st.button("4. CSVを生成してダウンロードを有効化", key="csv_ts_common")
+    if csv_clicked:
+        if target_mode == "単体URL":
+            timestamps_text = st.session_state.get("timestamps_input_ts", "")
+            flip = st.session_state.get("flip_ts", False)
+            if not url or not timestamps_text:
+                st.error("URLと楽曲リストを入力してください。")
+            elif not is_valid_youtube_url(url):
+                st.error("有効なYouTube URLを入力してください。")
+            else:
+                try:
+                    rows, _, invalid, video_title = generate_rows(
+                        url, timestamps_text, TZ_NAME, api_key_ts, manual_date_ts, flip
+                    )
+                    csv_content = to_csv(rows)
+                    download_name = re.sub(r'[\\/:*?"<>|\x00-\x1F]', "_", video_title or "").strip().strip(".") or "youtube_song_list"
+                    if len(download_name) > 100:
+                        download_name = download_name[:100]
+                    download_name += ".csv"
+
+                    st.session_state["ts_csv_bytes"] = csv_content.encode("utf-8-sig")
+                    st.session_state["ts_csv_name"] = download_name
+                    st.success("CSVを生成しました。下のボタンからダウンロードできます。")
+                    if invalid:
+                        st.info(f"未解析行：{len(invalid)}件。")
+                except Exception as e:
+                    st.error(f"エラー: {e}")
         else:
-            try:
-                rows, _, invalid, video_title = generate_rows(
-                    url, timestamps_text, TZ_NAME, api_key_ts, manual_date_ts, flip
-                )
-                csv_content = to_csv(rows)
-                download_name = re.sub(r'[\\/:*?"<>|\x00-\x1F]', "_", video_title or "").strip().strip(".") or "youtube_song_list"
-                if len(download_name) > 100:
-                    download_name = download_name[:100]
-                download_name += ".csv"
-
-                st.session_state["ts_csv_bytes"] = csv_content.encode("utf-8-sig")
-                st.session_state["ts_csv_name"] = download_name
-                st.success("CSVを生成しました。下のボタンからダウンロードできます。")
-                if invalid:
-                    st.info(f"未解析行：{len(invalid)}件。")
-            except Exception as e:
-                st.error(f"エラー: {e}")
-
-    if target_mode == "複数URL":
-        csv_multi_clicked = st.button("4. 複数動画CSVを生成してダウンロードを有効化", key="csv_ts_multi")
-        if csv_multi_clicked:
             try:
                 rows, warnings = build_multi_video_rows(
                     items=st.session_state.get("ts_multi_items", {}) or {},
