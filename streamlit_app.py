@@ -1128,8 +1128,7 @@ with tab1:
         "4) CSV生成・ダウンロード",
     ]
     st.info("\n".join(flow_steps))
-    st.caption("迷ったら、いま見えているステップ番号の操作だけ実行してください。")
-
+    
     target_mode = st.radio(
         "1. 対象動画の指定方法",
         ["単体", "複数"],
