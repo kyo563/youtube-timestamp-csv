@@ -721,17 +721,29 @@ def cb_fetch_latest_multi_video_candidates() -> None:
     st.session_state.pop("ts_multi_latest_err", None)
 
 
-def cb_apply_latest_multi_selection() -> None:
+def cb_on_target_mode_change() -> None:
+    st.session_state.pop("ts_multi_latest_err", None)
+
+
+def cb_apply_latest_selection() -> None:
+    target_mode = st.session_state.get("ts_target_mode")
     candidates = st.session_state.get("ts_multi_latest_candidates", []) or []
+    id_to_url = {c.get("videoId"): c.get("url", "") for c in candidates}
+
+    if target_mode == "単体":
+        selected_id = (st.session_state.get("ts_single_latest_selected_id", "") or "").strip()
+        selected_url = id_to_url.get(selected_id, "").strip()
+        if not selected_url:
+            st.session_state["ts_multi_latest_err"] = "対象動画を1件選択してください。"
+            return
+
+        st.session_state["ts_url"] = selected_url
+        st.session_state["ts_multi_latest_msg"] = "選択動画を反映しました。"
+        st.session_state.pop("ts_multi_latest_err", None)
+        return
+
     selected_ids = st.session_state.get("ts_multi_latest_selected_ids", []) or []
-
-    selected_urls = []
-    selected_set = set(selected_ids)
-    for c in candidates:
-        vid = c.get("videoId")
-        if vid in selected_set:
-            selected_urls.append(c.get("url", ""))
-
+    selected_urls = [id_to_url.get(vid, "").strip() for vid in selected_ids if id_to_url.get(vid, "").strip()]
     if not selected_urls:
         st.session_state["ts_multi_latest_err"] = "対象動画を1件以上選択してください。"
         return
@@ -741,13 +753,8 @@ def cb_apply_latest_multi_selection() -> None:
     st.session_state.pop("ts_multi_latest_err", None)
 
 
-def cb_on_target_mode_change() -> None:
-    if st.session_state.get("ts_target_mode") == "複数URL":
-        st.session_state["ts_multi_source_mode"] = "チャンネルの最新動画から選択"
-
-
 def cb_fetch_comment_candidates_by_mode() -> None:
-    if st.session_state.get("ts_target_mode") == "単体URL":
+    if st.session_state.get("ts_target_mode") == "単体":
         cb_fetch_candidates(do_autoselect_preview=False)
     else:
         cb_fetch_multi_video_candidates()
@@ -1111,7 +1118,7 @@ with tab1:
 
     api_key_ts = resolve_api_key()
     flow_steps = [
-        "1) 対象動画を指定（単体URL / 複数URL）",
+        "1) 対象動画を指定（単体 / 複数）",
         "2) タイムスタンプ入力（手動/コメント取得）",
         "3) プレビュー確認",
         "4) CSV生成・ダウンロード",
@@ -1120,91 +1127,90 @@ with tab1:
 
     target_mode = st.radio(
         "1. 対象動画の指定方法",
-        ["単体URL", "複数URL"],
+        ["単体", "複数"],
         horizontal=True,
         key="ts_target_mode",
         on_change=cb_on_target_mode_change,
     )
+    st.caption("URL直接入力は廃止し、チャンネルの最新動画から選択する方式に統一しています。")
+    st.text_input(
+        "チャンネルURLまたはチャンネルID（UC... / @handle / URL）",
+        placeholder="https://www.youtube.com/@example または UCxxxxxxxxxxxxxxxxxxxxxx",
+        key="ts_multi_channel_input",
+    )
+    st.slider(
+        "取得する最新動画件数",
+        min_value=3,
+        max_value=50,
+        value=10,
+        step=1,
+        key="ts_multi_latest_n",
+    )
+    st.button(
+        "1-A. 最新動画を取得",
+        key="ts_multi_fetch_latest",
+        on_click=cb_fetch_latest_multi_video_candidates,
+    )
 
-    if target_mode == "単体URL":
-        url = st.text_input(
-            "YouTube動画のURL",
-            placeholder="https://www.youtube.com/watch?v=xxxxxxxxxxx",
-            key="ts_url",
+    if st.session_state.get("ts_multi_latest_err"):
+        st.error(st.session_state["ts_multi_latest_err"])
+    if st.session_state.get("ts_multi_latest_msg"):
+        st.success(st.session_state["ts_multi_latest_msg"])
+
+    latest_candidates = st.session_state.get("ts_multi_latest_candidates", []) or []
+    if latest_candidates:
+        label_to_id: Dict[str, str] = {}
+        options = []
+        for c in latest_candidates:
+            title = (c.get("title") or "").strip()
+            ymd = c.get("yyyymmdd") or "----"
+            vid = c.get("videoId") or ""
+            url_ = c.get("url") or ""
+            label = f"{ymd} | {title} | {url_}"
+            options.append(label)
+            label_to_id[label] = vid
+
+        if target_mode == "単体":
+            selected_id = (st.session_state.get("ts_single_latest_selected_id", "") or "").strip()
+            default_index = 0
+            if selected_id:
+                for i, label in enumerate(options):
+                    if label_to_id.get(label) == selected_id:
+                        default_index = i
+                        break
+
+            picked_label = st.selectbox(
+                "1-B. 対象動画を選択",
+                options,
+                index=default_index,
+                key="ts_single_latest_selected_label",
+            )
+            st.session_state["ts_single_latest_selected_id"] = label_to_id.get(picked_label, "")
+        else:
+            current_ids = st.session_state.get("ts_multi_latest_selected_ids", []) or []
+            default_labels = [label for label in options if label_to_id.get(label) in current_ids]
+
+            picked_labels = st.multiselect(
+                "1-B. 対象動画を選択（複数可）",
+                options,
+                default=default_labels,
+                key="ts_multi_latest_selected_labels",
+            )
+            st.session_state["ts_multi_latest_selected_ids"] = [label_to_id[l] for l in picked_labels if l in label_to_id]
+
+        st.button(
+            "1-C. 選択を反映",
+            key="ts_apply_latest_selection",
+            on_click=cb_apply_latest_selection,
         )
+
+    url = (st.session_state.get("ts_url", "") or "").strip()
+    if target_mode == "単体":
+        st.text_input("選択中の動画URL", value=url, disabled=True)
     else:
-        url = ""
-        multi_source_mode = st.radio(
-            "複数動画の指定方法",
-            ["チャンネルの最新動画から選択", "URLを直接入力"],
-            horizontal=True,
-            index=0,
-            key="ts_multi_source_mode",
-        )
-
-        if multi_source_mode == "チャンネルの最新動画から選択":
-            st.caption("YouTube APIで最新動画を取得し、対象動画を選んでURL欄へ反映できます。")
-            st.text_input(
-                "チャンネルURLまたはチャンネルID（UC... / @handle / URL）",
-                placeholder="https://www.youtube.com/@example または UCxxxxxxxxxxxxxxxxxxxxxx",
-                key="ts_multi_channel_input",
-            )
-            st.slider(
-                "取得する最新動画件数",
-                min_value=3,
-                max_value=50,
-                value=10,
-                step=1,
-                key="ts_multi_latest_n",
-            )
-            st.button(
-                "1-A. 最新動画を取得",
-                key="ts_multi_fetch_latest",
-                on_click=cb_fetch_latest_multi_video_candidates,
-            )
-
-            if st.session_state.get("ts_multi_latest_err"):
-                st.error(st.session_state["ts_multi_latest_err"])
-            if st.session_state.get("ts_multi_latest_msg"):
-                st.success(st.session_state["ts_multi_latest_msg"])
-
-            latest_candidates = st.session_state.get("ts_multi_latest_candidates", []) or []
-            if latest_candidates:
-                label_to_id: Dict[str, str] = {}
-                options = []
-                for c in latest_candidates:
-                    title = (c.get("title") or "").strip()
-                    ymd = c.get("yyyymmdd") or "----"
-                    vid = c.get("videoId") or ""
-                    url_ = c.get("url") or ""
-                    label = f"{ymd} | {title} | {url_}"
-                    options.append(label)
-                    label_to_id[label] = vid
-
-                current_ids = st.session_state.get("ts_multi_latest_selected_ids", []) or []
-                default_labels = [label for label in options if label_to_id.get(label) in current_ids]
-
-                picked_labels = st.multiselect(
-                    "1-B. 対象動画を選択（複数可）",
-                    options,
-                    default=default_labels,
-                    key="ts_multi_latest_selected_labels",
-                )
-                st.session_state["ts_multi_latest_selected_ids"] = [label_to_id[l] for l in picked_labels if l in label_to_id]
-
-                st.button(
-                    "1-C. 選択動画をURL欄に反映",
-                    key="ts_multi_apply_latest",
-                    on_click=cb_apply_latest_multi_selection,
-                )
-
-        st.text_area(
-            "YouTube動画URL（1行に1つ）",
-            placeholder="https://www.youtube.com/watch?v=xxxxxxxxxxx\nhttps://youtu.be/yyyyyyyyyyy",
-            height=120,
-            key="ts_multi_urls",
-        )
-        parsed_urls = parse_unique_video_urls(st.session_state.get("ts_multi_urls", ""))
+        multi_urls = st.session_state.get("ts_multi_urls", "") or ""
+        st.text_area("選択中の動画URL（複数）", value=multi_urls, height=120, disabled=True)
+        parsed_urls = parse_unique_video_urls(multi_urls)
         st.caption(f"有効URL: {len(parsed_urls)} 件（重複は自動除外）")
 
     st.markdown("### 2. タイムスタンプを用意")
@@ -1245,7 +1251,7 @@ with tab1:
 
             st.button("2-A. コメント候補を取得", key="ts_fetch_comments_common", on_click=cb_fetch_comment_candidates_by_mode)
 
-            if target_mode == "単体URL":
+            if target_mode == "単体":
                 if st.session_state.get("ts_auto_err"):
                     st.error(st.session_state["ts_auto_err"])
                 if st.session_state.get("ts_auto_msg"):
@@ -1319,7 +1325,7 @@ with tab1:
                         items[vid] = it
                 st.session_state["ts_multi_items"] = items
 
-    if target_mode == "単体URL":
+    if target_mode == "単体":
         timestamps_input_ts = st.text_area(
             "タイムスタンプ付き楽曲リスト",
             placeholder="例：\n0:35 曲名A / アーティスト名A\n6:23 曲名B - アーティスト名B\n1:10:05 曲名C by アーティスト名C",
@@ -1346,7 +1352,7 @@ with tab1:
     with col_p2:
         preview_clicked = st.button("3. プレビューを更新", key="preview_ts")
 
-    if preview_clicked and target_mode == "単体URL":
+    if preview_clicked and target_mode == "単体":
         timestamps_text = st.session_state.get("timestamps_input_ts", "")
         flip = st.session_state.get("flip_ts", False)
         if not url or not timestamps_text:
@@ -1371,7 +1377,7 @@ with tab1:
 
     csv_clicked = st.button("4. CSVを生成してダウンロードを有効化", key="csv_ts_common")
     if csv_clicked:
-        if target_mode == "単体URL":
+        if target_mode == "単体":
             timestamps_text = st.session_state.get("timestamps_input_ts", "")
             flip = st.session_state.get("flip_ts", False)
             if not url or not timestamps_text:
