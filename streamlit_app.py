@@ -901,7 +901,16 @@ tab1, tab2, tab3 = st.tabs(["⏱ タイムスタンプCSV", "🎬 Shorts→CSV",
 # ---------------- タブ1 ----------------
 with tab1:
     st.subheader("タイムスタンプCSVジェネレーター")
-    st.write("YouTube動画のURLとタイムスタンプリストからCSVを生成します。")
+    st.write("入力→確認→出力の順で進める、4ステップ構成です。")
+
+    api_key_ts = resolve_api_key()
+    flow_steps = [
+        "1) URL入力",
+        "2) タイムスタンプ入力（手動/コメント取得）",
+        "3) プレビュー確認",
+        "4) CSV生成・ダウンロード",
+    ]
+    st.info("\n".join(flow_steps))
 
     url = st.text_input(
         "1. YouTube動画のURL",
@@ -909,11 +918,9 @@ with tab1:
         key="ts_url",
     )
 
-    api_key_ts = resolve_api_key()
-
-    st.markdown("### 入力方式")
+    st.markdown("### 2. タイムスタンプを用意")
     input_mode = st.radio(
-        "タイムスタンプ情報の取得方法",
+        "入力方法",
         ["手動（貼り付け）", "自動（コメントから取得）"],
         horizontal=True,
         key="ts_input_mode",
@@ -921,17 +928,15 @@ with tab1:
 
     manual_date_raw_ts: str = ""
     manual_date_ts: str = ""
-
     if not api_key_ts:
         manual_date_raw_ts = st.text_input(
-            "公開日を手動指定（API未設定時に利用／任意）",
-            placeholder="例: 2025/11/19, 11/19, 3月20日 など",
+            "公開日を手動指定（API未設定時のみ）",
+            placeholder="例: 2025/11/19, 11/19, 3月20日",
             key="ts_manual_date_raw",
         )
 
-    # 既存入力欄（自動取得後も微調整できるよう常に表示）
     timestamps_input_ts = st.text_area(
-        "2. 楽曲リスト（タイムスタンプ付き）",
+        "タイムスタンプ付き楽曲リスト",
         placeholder="例：\n0:35 曲名A / アーティスト名A\n6:23 曲名B - アーティスト名B\n1:10:05 曲名C by アーティスト名C",
         height=220,
         key="timestamps_input_ts",
@@ -943,61 +948,33 @@ with tab1:
             manual_date_ts = normalized
             st.caption(f"解釈された公開日: {manual_date_ts}")
         else:
-            manual_date_ts = ""
-            st.error("日付として解釈できませんでした。例: 2025/11/19, 11/19, 3月20日 などの形式で入力してください。")
+            st.error("日付の解釈に失敗しました。例: 2025/11/19, 11/19, 3月20日")
 
-    # ---- 自動取得UI ----
     if input_mode == "自動（コメントから取得）":
-        st.markdown("### 🤖 コメントからタイムスタンプを自動取得")
+        st.markdown("#### コメントから候補を取り込む")
+        st.caption("この手順で入力欄に反映されます。反映後は入力欄を直接編集して調整できます。")
 
         if not api_key_ts:
-            st.warning("コメント自動取得はYouTube Data API v3 のAPIキーが必須です。")
+            st.warning("コメント自動取得にはAPIキーが必要です。")
         else:
             col_a1, col_a2 = st.columns([2, 2])
             with col_a1:
-                st.selectbox(
-                    "コメント取得順（候補の並び）",
-                    ["relevance", "time"],
-                    index=0,
-                    help="relevanceは高評価コメントが上位に来やすい想定です。",
-                    key="ts_auto_order",
-                )
+                st.selectbox("コメント取得順", ["relevance", "time"], index=0, key="ts_auto_order")
             with col_a2:
-                st.text_input(
-                    "検索語（任意。入れるとコメントを絞れます）",
-                    value="",
-                    key="ts_auto_search_terms",
-                )
+                st.text_input("検索語（任意）", value="", key="ts_auto_search_terms")
 
             col_a3, col_a4 = st.columns([2, 2])
             with col_a3:
-                st.slider(
-                    "探索ページ数（多いほど重くなります）",
-                    min_value=1, max_value=10, value=3, step=1,
-                    key="ts_auto_pages",
-                )
+                st.slider("探索ページ数", min_value=1, max_value=10, value=3, step=1, key="ts_auto_pages")
             with col_a4:
-                st.checkbox(
-                    "タイムスタンプ行だけ抽出して貼り付ける（推奨）",
-                    value=True,
-                    key="ts_auto_only_ts_lines",
-                )
+                st.checkbox("タイムスタンプ行のみ抽出", value=True, key="ts_auto_only_ts_lines")
 
-            col_btn1, col_btn2 = st.columns(2)
-            with col_btn1:
-                st.button(
-                    "🤖 コメント候補を取得する",
-                    key="ts_auto_fetch",
-                    on_click=cb_fetch_candidates,
-                    kwargs={"do_autoselect_preview": False},
-                )
-            with col_btn2:
-                st.button(
-                    "🤖 取得→自動選択→プレビュー",
-                    key="ts_auto_fetch_preview",
-                    on_click=cb_fetch_candidates,
-                    kwargs={"do_autoselect_preview": True},
-                )
+            st.button(
+                "2-A. コメント候補を取得",
+                key="ts_auto_fetch",
+                on_click=cb_fetch_candidates,
+                kwargs={"do_autoselect_preview": False},
+            )
 
             if st.session_state.get("ts_auto_err"):
                 st.error(st.session_state["ts_auto_err"])
@@ -1006,7 +983,6 @@ with tab1:
 
             cands = st.session_state.get("ts_auto_candidates", []) or []
             if cands:
-                st.markdown("#### 候補を選んで貼り付ける")
                 labels = []
                 shown = cands[:30]
                 for i, c in enumerate(shown, start=1):
@@ -1015,40 +991,31 @@ with tab1:
                     owner_tag = "本人" if c.get("is_owner") else "外部"
                     labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {owner_tag} / {head}")
 
-                picked = st.selectbox("コメント候補", labels, key="ts_auto_pick")
+                picked = st.selectbox("2-B. 反映する候補", labels, key="ts_auto_pick")
                 picked_idx = labels.index(picked)
 
-                col_pick1, col_pick2 = st.columns(2)
-                with col_pick1:
-                    st.button(
-                        "この候補を貼り付ける",
-                        key="ts_auto_apply",
-                        on_click=cb_apply_candidate,
-                        kwargs={"index": picked_idx, "do_preview": False},
-                    )
-                with col_pick2:
-                    st.button(
-                        "この候補でプレビュー生成",
-                        key="ts_auto_apply_preview",
-                        on_click=cb_apply_candidate,
-                        kwargs={"index": picked_idx, "do_preview": True},
-                    )
+                st.button(
+                    "2-C. この候補を入力欄へ反映",
+                    key="ts_auto_apply",
+                    on_click=cb_apply_candidate,
+                    kwargs={"index": picked_idx, "do_preview": False},
+                )
 
                 with st.expander("選択中コメント（全文）"):
                     st.text(shown[picked_idx]["text"])
 
-    # ---- 既存：左右反転・プレビュー・CSV ----
-    c1, c2 = st.columns(2)
-    with c1:
+    st.markdown("### 3. プレビュー確認")
+    st.caption("修正したい場合は『2. タイムスタンプを用意』に戻って編集し、再度プレビューを更新してください。")
+
+    col_p1, col_p2 = st.columns([1, 1])
+    with col_p1:
         st.toggle("左右反転", value=False, key="flip_ts")
-        preview_clicked = st.button("🔍 プレビュー表示", key="preview_ts")
-    with c2:
-        csv_clicked = st.button("📥 CSVファイルを生成", key="csv_ts")
+    with col_p2:
+        preview_clicked = st.button("3. プレビューを更新", key="preview_ts")
 
     if preview_clicked:
         timestamps_text = st.session_state.get("timestamps_input_ts", "")
         flip = st.session_state.get("flip_ts", False)
-
         if not url or not timestamps_text:
             st.error("URLと楽曲リストを入力してください。")
         elif not is_valid_youtube_url(url):
@@ -1061,10 +1028,15 @@ with tab1:
                 st.session_state["ts_preview_df"] = preview
                 st.session_state["ts_preview_invalid"] = invalid
                 st.session_state["ts_preview_title"] = video_title
-                st.success(f"解析成功：{len(preview)}件。未解析：{len(invalid)}件。下部にプレビューを表示しました。")
+                st.session_state["ts_last_rows"] = rows
+                st.success(f"解析成功：{len(preview)}件（未解析 {len(invalid)}件）")
             except Exception as e:
                 st.error(f"エラー: {e}")
 
+    st.markdown("### 4. CSV出力")
+    st.caption("出力前に修正したい場合は、ステップ2に戻って編集 → ステップ3で再確認してください。")
+
+    csv_clicked = st.button("4. CSVを生成してダウンロードを有効化", key="csv_ts")
     if csv_clicked:
         timestamps_text = st.session_state.get("timestamps_input_ts", "")
         flip = st.session_state.get("flip_ts", False)
@@ -1074,27 +1046,30 @@ with tab1:
             st.error("有効なYouTube URLを入力してください。")
         else:
             try:
-                rows, preview, invalid, video_title = generate_rows(
+                rows, _, invalid, video_title = generate_rows(
                     url, timestamps_text, TZ_NAME, api_key_ts, manual_date_ts, flip
                 )
                 csv_content = to_csv(rows)
-
                 download_name = re.sub(r'[\\/:*?"<>|\x00-\x1F]', "_", video_title or "").strip().strip(".") or "youtube_song_list"
                 if len(download_name) > 100:
                     download_name = download_name[:100]
                 download_name += ".csv"
 
-                st.success("CSVファイルを生成しました。下のボタンからダウンロードできます。")
-                st.download_button(
-                    label="CSVをダウンロード",
-                    data=csv_content.encode("utf-8-sig"),
-                    file_name=download_name,
-                    mime="text/csv"
-                )
+                st.session_state["ts_csv_bytes"] = csv_content.encode("utf-8-sig")
+                st.session_state["ts_csv_name"] = download_name
+                st.success("CSVを生成しました。下のボタンからダウンロードできます。")
                 if invalid:
-                    st.info(f"未解析行：{len(invalid)}件。入力の書式を確認してください。")
+                    st.info(f"未解析行：{len(invalid)}件。")
             except Exception as e:
                 st.error(f"エラー: {e}")
+
+    if st.session_state.get("ts_csv_bytes") and st.session_state.get("ts_csv_name"):
+        st.download_button(
+            label="CSVをダウンロード",
+            data=st.session_state["ts_csv_bytes"],
+            file_name=st.session_state["ts_csv_name"],
+            mime="text/csv",
+        )
 
     if "ts_preview_df" in st.session_state:
         st.subheader("プレビュー")
