@@ -25,6 +25,11 @@ YT_API_BASE = "https://www.googleapis.com/youtube/v3"
 
 GLOBAL_API_KEY = st.secrets.get("YT_API_KEY", "")
 
+COMMENT_ORDER_LABELS: Dict[str, str] = {
+    "関連度順（おすすめコメント優先）": "relevance",
+    "新しい順（投稿時刻が新しい順）": "time",
+}
+
 # ==============================
 # 共通ユーティリティ
 # ==============================
@@ -1239,7 +1244,16 @@ with tab1:
         else:
             col_a1, col_a2 = st.columns([2, 2])
             with col_a1:
-                st.selectbox("コメント取得順", ["relevance", "time"], index=0, key="ts_auto_order")
+                current_order = st.session_state.get("ts_auto_order", "relevance")
+                label_by_value = {v: k for k, v in COMMENT_ORDER_LABELS.items()}
+                default_label = label_by_value.get(current_order, "関連度順（おすすめコメント優先）")
+                selected_label = st.selectbox(
+                    "コメント取得順",
+                    list(COMMENT_ORDER_LABELS.keys()),
+                    index=list(COMMENT_ORDER_LABELS.keys()).index(default_label),
+                )
+                st.session_state["ts_auto_order"] = COMMENT_ORDER_LABELS[selected_label]
+                st.caption("関連度順: 評価が高い/動画に関連が強いコメントを優先。新しい順: 直近に投稿されたコメントを優先。")
             with col_a2:
                 st.text_input("検索語（任意）", value="", key="ts_auto_search_terms")
 
