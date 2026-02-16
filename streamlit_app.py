@@ -122,6 +122,28 @@ def extract_playlist_id(u: str) -> Optional[str]:
         return None
 
 
+def parse_unique_video_urls(urls_text: str) -> Tuple[List[str], List[str]]:
+    urls: List[str] = []
+    invalid: List[str] = []
+    seen = set()
+    for raw in (urls_text or "").splitlines():
+        u = (raw or "").strip()
+        if not u:
+            continue
+        if not is_valid_youtube_url(u):
+            invalid.append(u)
+            continue
+        vid = extract_video_id(u)
+        if not vid:
+            invalid.append(u)
+            continue
+        watch_url = f"https://www.youtube.com/watch?v={vid}"
+        if watch_url not in seen:
+            seen.add(watch_url)
+            urls.append(watch_url)
+    return urls, invalid
+
+
 def normalize_manual_date_input(raw: str, tz_name: str) -> Optional[str]:
     s = (raw or "").strip()
     if not s:
@@ -463,6 +485,49 @@ def generate_rows(
     return rows, parsed_preview, invalid_lines, video_title
 
 
+def build_multi_video_rows(
+    video_items: List[dict],
+    tz_name: str,
+    api_key: str,
+    manual_yyyymmdd: str,
+    flip: bool,
+) -> Tuple[List[List[str]], List[dict], List[str]]:
+    rows: List[List[str]] = [["動画ID", "動画URL", "アーティスト名", "楽曲名", "YouTubeリンク"]]
+    preview: List[dict] = []
+    errors: List[str] = []
+
+    for item in video_items:
+        watch_url = (item.get("watch_url") or "").strip()
+        vid = extract_video_id(watch_url)
+        if not vid:
+            errors.append(f"URL解析失敗: {watch_url}")
+            continue
+
+        ts_text = (item.get("applied_text") or "").strip()
+        if not ts_text:
+            errors.append(f"コメント未適用: {watch_url}")
+            continue
+
+        try:
+            per_rows, per_preview, _, _ = generate_rows(
+                watch_url, ts_text, tz_name, api_key, manual_yyyymmdd, flip
+            )
+            for r in per_rows[1:]:
+                rows.append([vid, watch_url, r[0], r[1], r[2]])
+            for p in per_preview:
+                p2 = dict(p)
+                p2["video_id"] = vid
+                p2["watch_url"] = watch_url
+                preview.append(p2)
+        except Exception as e:
+            errors.append(f"{watch_url}: {e}")
+
+    if len(rows) == 1:
+        raise ValueError("複数動画のCSVに出力できるタイムスタンプがありません。")
+
+    return rows, preview, errors
+
+
 # ==============================
 # tab1: コールバック（重要：widget key を安全に更新する）
 # ==============================
@@ -560,6 +625,64 @@ def cb_apply_candidate(index: int, do_preview: bool) -> None:
         st.session_state["ts_auto_err"] = "候補がありません（先に「コメント候補を取得」してください）。"
         return
     _apply_comment_text(cands[index]["text"], do_preview=do_preview)
+
+
+def cb_fetch_multi_video_candidates() -> None:
+    api_key = _get_ts_api_key()
+    if not api_key:
+        st.session_state["ts_multi_err"] = "複数動画のコメント自動取得はAPIキー必須です。"
+        return
+
+    multi_urls_text = st.session_state.get("ts_multi_urls", "")
+    urls, invalid = parse_unique_video_urls(multi_urls_text)
+    if not urls:
+        st.session_state["ts_multi_err"] = "有効なYouTube動画URLがありません。"
+        st.session_state["ts_multi_items"] = []
+        return
+
+    order = st.session_state.get("ts_auto_order", "relevance")
+    terms = st.session_state.get("ts_auto_search_terms", "")
+    pages = int(st.session_state.get("ts_auto_pages", 3))
+
+    items: List[dict] = []
+    errs: List[str] = []
+    for watch_url in urls:
+        vid = extract_video_id(watch_url)
+        if not vid:
+            errs.append(f"videoId抽出失敗: {watch_url}")
+            continue
+
+        cands, err = fetch_timestamp_comment_candidates(
+            video_id=vid,
+            api_key=api_key,
+            order=order,
+            search_terms=terms,
+            max_pages=pages,
+        )
+        if err:
+            errs.append(f"{watch_url}: {err}")
+
+        applied = ""
+        if cands:
+            applied = _extract_timestamp_lines(cands[0]["text"], st.session_state.get("flip_ts", False))
+        items.append({
+            "watch_url": watch_url,
+            "video_id": vid,
+            "video_title": fetch_video_title_from_oembed(watch_url),
+            "candidates": cands,
+            "selected_index": 0,
+            "applied_text": applied,
+        })
+
+    if invalid:
+        errs.extend([f"無効URL: {u}" for u in invalid])
+
+    st.session_state["ts_multi_items"] = items
+    if errs:
+        st.session_state["ts_multi_err"] = "\n".join(errs[:20])
+    else:
+        st.session_state.pop("ts_multi_err", None)
+    st.session_state["ts_multi_msg"] = f"動画 {len(items)} 件の候補を取得しました。"
 
 
 # ==============================
@@ -912,11 +1035,26 @@ with tab1:
     ]
     st.info("\n".join(flow_steps))
 
+    target_mode = st.radio(
+        "1. 対象動画の指定方法",
+        ["URLを1件入力", "複数URLを入力（動画ごとにコメント取得）"],
+        horizontal=True,
+        key="ts_target_mode",
+    )
+
     url = st.text_input(
-        "1. YouTube動画のURL",
+        "1-A. YouTube動画のURL（単体）",
         placeholder="https://www.youtube.com/watch?v=xxxxxxxxxxx",
         key="ts_url",
     )
+
+    if target_mode == "複数URLを入力（動画ごとにコメント取得）":
+        st.text_area(
+            "1-B. YouTube動画URLを1行ずつ入力",
+            placeholder="https://www.youtube.com/watch?v=xxxxxxx\nhttps://youtu.be/yyyyyyy",
+            height=120,
+            key="ts_multi_urls",
+        )
 
     st.markdown("### 2. タイムスタンプを用意")
     input_mode = st.radio(
@@ -976,6 +1114,13 @@ with tab1:
                 kwargs={"do_autoselect_preview": False},
             )
 
+            if target_mode == "複数URLを入力（動画ごとにコメント取得）":
+                st.button(
+                    "2-A(複数). 各URLのコメント候補を一括取得",
+                    key="ts_auto_fetch_multi",
+                    on_click=cb_fetch_multi_video_candidates,
+                )
+
             if st.session_state.get("ts_auto_err"):
                 st.error(st.session_state["ts_auto_err"])
             if st.session_state.get("ts_auto_msg"):
@@ -1003,6 +1148,51 @@ with tab1:
 
                 with st.expander("選択中コメント（全文）"):
                     st.text(shown[picked_idx]["text"])
+
+            if st.session_state.get("ts_multi_err"):
+                st.error(st.session_state["ts_multi_err"])
+            if st.session_state.get("ts_multi_msg"):
+                st.success(st.session_state["ts_multi_msg"])
+
+            multi_items = st.session_state.get("ts_multi_items", []) or []
+            if target_mode == "複数URLを入力（動画ごとにコメント取得）" and multi_items:
+                st.markdown("#### 複数URL: 動画ごとに候補を選択")
+                st.caption("各動画の候補はその動画のvideoIdで取得しており、他動画コメントは混在しません。")
+                for i, item in enumerate(multi_items):
+                    with st.expander(f"[{i+1}] {item.get('video_title') or item.get('video_id')}"):
+                        st.code(item.get("watch_url", ""))
+                        cands_i = item.get("candidates", []) or []
+                        if not cands_i:
+                            st.warning("候補コメントが見つかりませんでした。")
+                            continue
+
+                        labels_i = []
+                        for j, c in enumerate(cands_i[:20], start=1):
+                            head = (c.get("text", "").splitlines()[0] if c.get("text") else "").strip()
+                            head = head[:60] + ("…" if len(head) > 60 else "")
+                            labels_i.append(f"[{j}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {head}")
+
+                        sel_key = f"ts_multi_pick_{i}"
+                        default_idx = min(item.get("selected_index", 0), len(labels_i) - 1)
+                        selected = st.selectbox("候補を選択", labels_i, index=default_idx, key=sel_key)
+                        selected_idx = labels_i.index(selected)
+                        item["selected_index"] = selected_idx
+
+                        apply_key = f"ts_multi_apply_{i}"
+                        if st.button("この候補を採用", key=apply_key):
+                            text_i = cands_i[selected_idx].get("text", "")
+                            if st.session_state.get("ts_auto_only_ts_lines", True):
+                                text_i = _extract_timestamp_lines(text_i, st.session_state.get("flip_ts", False))
+                            item["applied_text"] = text_i
+
+                        st.text_area(
+                            "採用済みタイムスタンプ（必要なら編集）",
+                            value=item.get("applied_text", ""),
+                            key=f"ts_multi_text_{i}",
+                            height=140,
+                        )
+                        item["applied_text"] = st.session_state.get(f"ts_multi_text_{i}", item.get("applied_text", ""))
+                st.session_state["ts_multi_items"] = multi_items
 
     st.markdown("### 3. プレビュー確認")
     st.caption("修正したい場合は『2. タイムスタンプを用意』に戻って編集し、再度プレビューを更新してください。")
@@ -1070,6 +1260,41 @@ with tab1:
             file_name=st.session_state["ts_csv_name"],
             mime="text/csv",
         )
+
+    if target_mode == "複数URLを入力（動画ごとにコメント取得）":
+        st.markdown("#### 複数動画を一括CSV化")
+        st.caption("各動画で採用したコメントのみを使って、1つのCSVにまとめます。")
+        multi_csv_clicked = st.button("4-M. 複数動画CSVを生成", key="csv_ts_multi")
+        if multi_csv_clicked:
+            try:
+                flip = st.session_state.get("flip_ts", False)
+                rows_multi, preview_multi, errs_multi = build_multi_video_rows(
+                    st.session_state.get("ts_multi_items", []) or [],
+                    TZ_NAME,
+                    api_key_ts,
+                    manual_date_ts,
+                    flip,
+                )
+                csv_content_multi = to_csv(rows_multi)
+                st.session_state["ts_multi_csv_bytes"] = csv_content_multi.encode("utf-8-sig")
+                st.session_state["ts_multi_csv_name"] = "youtube_timestamp_multi.csv"
+                st.session_state["ts_multi_preview_df"] = preview_multi
+                st.success(f"複数動画CSVを生成しました（行数: {len(rows_multi)-1}）。")
+                if errs_multi:
+                    st.warning("\n".join(errs_multi[:20]))
+            except Exception as e:
+                st.error(f"複数動画CSVの生成に失敗しました: {e}")
+
+        if st.session_state.get("ts_multi_csv_bytes") and st.session_state.get("ts_multi_csv_name"):
+            st.download_button(
+                label="複数動画CSVをダウンロード",
+                data=st.session_state["ts_multi_csv_bytes"],
+                file_name=st.session_state["ts_multi_csv_name"],
+                mime="text/csv",
+            )
+
+        if "ts_multi_preview_df" in st.session_state:
+            st.dataframe(pd.DataFrame(st.session_state["ts_multi_preview_df"]), use_container_width=True)
 
     if "ts_preview_df" in st.session_state:
         st.subheader("プレビュー")
