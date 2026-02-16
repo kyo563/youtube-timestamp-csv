@@ -681,15 +681,15 @@ def cb_fetch_latest_multi_video_candidates() -> None:
         st.session_state["ts_multi_latest_candidates"] = []
         return
 
-    channel_url = (st.session_state.get("ts_multi_channel_url", "") or "").strip()
-    if not channel_url:
-        st.session_state["ts_multi_latest_err"] = "チャンネルURLを入力してください。"
+    channel_input = (st.session_state.get("ts_multi_channel_input", "") or "").strip()
+    if not channel_input:
+        st.session_state["ts_multi_latest_err"] = "チャンネルURLまたはチャンネルIDを入力してください。"
         st.session_state["ts_multi_latest_candidates"] = []
         return
 
-    channel_id = resolve_channel_id_from_url(channel_url, api_key)
+    channel_id = resolve_channel_id_from_input(channel_input, api_key)
     if not channel_id:
-        st.session_state["ts_multi_latest_err"] = "チャンネルIDを特定できませんでした。URLを確認してください。"
+        st.session_state["ts_multi_latest_err"] = "チャンネルIDを特定できませんでした。URLまたはIDを確認してください。"
         st.session_state["ts_multi_latest_candidates"] = []
         return
 
@@ -745,21 +745,36 @@ def cb_apply_latest_multi_selection() -> None:
 # タブ2：Shorts → CSV 用関数
 # ==============================
 @st.cache_data(show_spinner=False, ttl=600)
-def resolve_channel_id_from_url(url: str, api_key: str) -> Optional[str]:
-    if not url or not api_key:
+def resolve_channel_id_from_input(channel_input: str, api_key: str) -> Optional[str]:
+    text = (channel_input or "").strip()
+    if not text:
+        return None
+
+    if re.fullmatch(r"U[\w-]+", text):
+        return text
+
+    if not api_key:
         return None
 
     try:
-        pr = urllib.parse.urlparse(url)
-        path = pr.path or ""
+        if text.startswith("http://") or text.startswith("https://"):
+            pr = urllib.parse.urlparse(text)
+            path = pr.path or ""
+        else:
+            path = text
 
-        m = re.search(r"/channel/(UC[\w-]+)", path)
+        m = re.search(r"/channel/(U[\w-]+)", path)
         if m:
             return m.group(1)
 
+        handle = ""
         m = re.search(r"/@([^/?#]+)", path)
         if m:
             handle = m.group(1)
+        elif text.startswith("@") and len(text) > 1:
+            handle = text[1:]
+
+        if handle:
             data = yt_get_json(
                 "channels",
                 {"part": "id", "forHandle": f"@{handle}", "key": api_key},
@@ -1116,9 +1131,9 @@ with tab1:
         if multi_source_mode == "チャンネルの最新動画から選択":
             st.caption("YouTube APIで最新動画を取得し、対象動画を選んでURL欄へ反映できます。")
             st.text_input(
-                "チャンネルURL（/channel/UC... または /@handle）",
-                placeholder="https://www.youtube.com/@example",
-                key="ts_multi_channel_url",
+                "チャンネルURLまたはチャンネルID（UC... / @handle / URL）",
+                placeholder="https://www.youtube.com/@example または UCxxxxxxxxxxxxxxxxxxxxxx",
+                key="ts_multi_channel_input",
             )
             st.slider(
                 "取得する最新動画件数",
@@ -1147,7 +1162,8 @@ with tab1:
                     title = (c.get("title") or "").strip()
                     ymd = c.get("yyyymmdd") or "----"
                     vid = c.get("videoId") or ""
-                    label = f"{ymd} | {title} ({vid})"
+                    url_ = c.get("url") or ""
+                    label = f"{ymd} | {title} | {url_}"
                     options.append(label)
                     label_to_id[label] = vid
 
@@ -1435,14 +1451,14 @@ with tab1:
 with tab2:
     st.subheader("ショート → CSV")
     st.write(
-        "チャンネルURLからショート動画を取得し、タイトルから **楽曲名/アーティスト名** を推定して "
+        "チャンネルURLまたはチャンネルIDからショート動画を取得し、タイトルから **楽曲名/アーティスト名** を推定して "
         "CSV（アーティスト名, 楽曲名, ショート動画）を生成します。"
     )
 
-    channel_url = st.text_input(
-        "チャンネルのURL（/channel/UC… または /@handle）",
-        placeholder="https://www.youtube.com/@Google",
-        key="shorts_channel_url",
+    channel_input = st.text_input(
+        "チャンネルのURLまたはチャンネルID（UC... / @handle / URL）",
+        placeholder="https://www.youtube.com/@Google または UCxxxxxxxxxxxxxxxxxxxxxx",
+        key="shorts_channel_input",
     )
     max_items = st.slider(
         "取得件数（上限）",
@@ -1458,8 +1474,8 @@ with tab2:
     run = st.button("実行（ショート取得→推定→CSV生成）", key="shorts_run")
 
     if run:
-        if not channel_url:
-            st.error("チャンネルURLを入力してください。")
+        if not channel_input:
+            st.error("チャンネルURLまたはチャンネルIDを入力してください。")
         else:
             try:
                 video_ids: List[str] = []
@@ -1467,9 +1483,9 @@ with tab2:
                 ymd_map: Dict[str, Optional[str]] = {}
 
                 if api_key_shorts:
-                    ch_id = resolve_channel_id_from_url(channel_url, api_key_shorts)
+                    ch_id = resolve_channel_id_from_input(channel_input, api_key_shorts)
                     if not ch_id:
-                        st.error("チャンネルIDを特定できませんでした（URLを確認するか、@handle 形式の場合はAPIキーが必要です）。")
+                        st.error("チャンネルIDを特定できませんでした（URL/IDを確認するか、@handle 形式の場合はAPIキーが必要です）。")
                         st.stop()
                     st.info(f"チャンネルIDを特定しました：{ch_id}")
 
@@ -1483,7 +1499,7 @@ with tab2:
                     ymd_map = {m["videoId"]: m["yyyymmdd"] for m in shorts}
                 else:
                     st.warning("APIキー未設定のため、Webページからの簡易抽出で試行します（公開日は取得できません）。")
-                    video_ids = scrape_shorts_ids_from_web(channel_url, limit=max_items)
+                    video_ids = scrape_shorts_ids_from_web(channel_input, limit=max_items)
                     for vid in video_ids:
                         try:
                             j = requests.get(
@@ -1550,10 +1566,10 @@ with tab3:
     )
 
     if latest_mode == "チャンネルの最新動画":
-        latest_channel_url = st.text_input(
-            "チャンネルのURL（/channel/UC… または /@handle）",
-            placeholder="https://www.youtube.com/@Google",
-            key="latest_channel_url",
+        latest_channel_input = st.text_input(
+            "チャンネルのURLまたはチャンネルID（UC... / @handle / URL）",
+            placeholder="https://www.youtube.com/@Google または UCxxxxxxxxxxxxxxxxxxxxxx",
+            key="latest_channel_input",
         )
         latest_playlist_url = ""
     else:
@@ -1562,7 +1578,7 @@ with tab3:
             placeholder="https://www.youtube.com/playlist?list=PLxxxxxxxx",
             key="latest_playlist_url",
         )
-        latest_channel_url = ""
+        latest_channel_input = ""
 
     latest_n = st.slider(
         "取得件数（n）",
@@ -1593,13 +1609,13 @@ with tab3:
         keep_playlist_order = latest_mode == "プレイリスト" and sort_choice == "プレイリスト登録順を保持（ソートしない）"
 
         if latest_mode == "チャンネルの最新動画":
-            if not latest_channel_url:
-                st.error("チャンネルURLを入力してください。")
+            if not latest_channel_input:
+                st.error("チャンネルURLまたはチャンネルIDを入力してください。")
                 st.stop()
 
-            ch_id = resolve_channel_id_from_url(latest_channel_url, api_key_latest)
+            ch_id = resolve_channel_id_from_input(latest_channel_input, api_key_latest)
             if not ch_id:
-                st.error("チャンネルIDを特定できませんでした（/channel/UC… 形式か、@handle の綴りを確認してください）。")
+                st.error("チャンネルIDを特定できませんでした（UC... /channel/UC... /@handle / URL を確認してください）。")
                 st.stop()
 
             st.info(f"チャンネルID：{ch_id}")
