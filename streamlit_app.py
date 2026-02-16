@@ -61,15 +61,54 @@ def yt_get_json_verbose(path: str, params: Dict, timeout: int = 10) -> Tuple[Opt
     try:
         r = requests.get(f"{YT_API_BASE}/{path.lstrip('/')}", params=params, timeout=timeout)
         if r.status_code != 200:
+            reason = ""
             try:
                 j = r.json()
-                msg = (j.get("error", {}) or {}).get("message") or ""
+                err = j.get("error", {}) or {}
+                msg = err.get("message") or ""
+                errs = err.get("errors") or []
+                if errs and isinstance(errs, list):
+                    reason = (errs[0] or {}).get("reason") or ""
             except Exception:
                 msg = r.text[:300] if r.text else ""
-            return None, f"{r.status_code} {msg}".strip()
+            return None, explain_youtube_api_error(r.status_code, msg, reason)
         return r.json(), None
     except Exception as e:
-        return None, str(e)
+        return None, explain_youtube_api_exception(e)
+
+
+def explain_youtube_api_error(status_code: int, message: str, reason: str = "") -> str:
+    msg = (message or "").strip()
+    rsn = (reason or "").strip()
+    quota_reasons = {
+        "quotaExceeded",
+        "dailyLimitExceeded",
+        "dailyLimitExceededUnreg",
+        "rateLimitExceeded",
+        "userRateLimitExceeded",
+    }
+    auth_reasons = {
+        "keyInvalid",
+        "accessNotConfigured",
+        "forbidden",
+        "insufficientPermissions",
+    }
+
+    if status_code in (429,) or rsn in quota_reasons:
+        return f"APIクオータ上限の可能性があります（HTTP {status_code}: {msg or rsn or '詳細不明'}）"
+    if status_code == 403 and any(k in msg.lower() for k in ["quota", "rate", "limit"]):
+        return f"APIクオータ上限の可能性があります（HTTP {status_code}: {msg}）"
+    if status_code in (401, 403) and rsn in auth_reasons:
+        return f"APIキーまたは権限設定の問題の可能性があります（HTTP {status_code}: {msg or rsn}）"
+    return f"YouTube APIエラーです（HTTP {status_code}: {msg or rsn or '詳細不明'}）"
+
+
+def explain_youtube_api_exception(exc: Exception) -> str:
+    text = str(exc).strip() or exc.__class__.__name__
+    lowered = text.lower()
+    if any(k in lowered for k in ["name or service not known", "temporary failure in name resolution", "nodename nor servname", "connection", "timeout", "timed out", "ssl"]):
+        return f"ネットワーク接続の問題の可能性があります（{text}）"
+    return f"通信中にエラーが発生しました（{text}）"
 
 
 def to_csv(rows: List[List[str]]) -> str:
@@ -699,7 +738,11 @@ def cb_fetch_latest_multi_video_candidates() -> None:
         return
 
     latest_n = int(st.session_state.get("ts_multi_latest_n", 10))
-    video_ids = list_latest_video_ids_mixed(channel_id, api_key, latest_n)
+    video_ids, latest_err = list_latest_video_ids_mixed_verbose(channel_id, api_key, latest_n)
+    if latest_err:
+        st.session_state["ts_multi_latest_err"] = f"最新動画の取得に失敗しました。{latest_err}"
+        st.session_state["ts_multi_latest_candidates"] = []
+        return
     if not video_ids:
         st.session_state["ts_multi_latest_err"] = "最新動画を取得できませんでした。"
         st.session_state["ts_multi_latest_candidates"] = []
@@ -1006,6 +1049,43 @@ def list_playlist_video_ids(playlist_id: str, api_key: str, limit: int) -> List[
 
 
 @st.cache_data(show_spinner=False, ttl=600)
+def list_playlist_video_ids_verbose(playlist_id: str, api_key: str, limit: int) -> Tuple[List[str], Optional[str]]:
+    ids: List[str] = []
+    token = None
+    seen = set()
+
+    while len(ids) < limit:
+        params = {
+            "part": "contentDetails",
+            "playlistId": playlist_id,
+            "maxResults": 50,
+            "key": api_key,
+        }
+        if token:
+            params["pageToken"] = token
+
+        data, err = yt_get_json_verbose("playlistItems", params, timeout=10)
+        if err:
+            return [], err
+        if not data:
+            break
+
+        for it in data.get("items", []):
+            vid = (it.get("contentDetails", {}) or {}).get("videoId")
+            if vid and vid not in seen:
+                seen.add(vid)
+                ids.append(vid)
+                if len(ids) >= limit:
+                    break
+
+        token = data.get("nextPageToken")
+        if not token:
+            break
+
+    return ids[:limit], None
+
+
+@st.cache_data(show_spinner=False, ttl=600)
 def list_latest_video_ids_mixed(channel_id: str, api_key: str, limit: int) -> List[str]:
     ids: List[str] = []
     token = None
@@ -1040,6 +1120,45 @@ def list_latest_video_ids_mixed(channel_id: str, api_key: str, limit: int) -> Li
             break
 
     return ids[:limit]
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def list_latest_video_ids_mixed_verbose(channel_id: str, api_key: str, limit: int) -> Tuple[List[str], Optional[str]]:
+    ids: List[str] = []
+    token = None
+    seen = set()
+
+    while len(ids) < limit:
+        params = {
+            "part": "id",
+            "channelId": channel_id,
+            "type": "video",
+            "order": "date",
+            "maxResults": 50,
+            "key": api_key,
+        }
+        if token:
+            params["pageToken"] = token
+
+        data, err = yt_get_json_verbose("search", params, timeout=10)
+        if err:
+            return [], err
+        if not data:
+            break
+
+        for it in data.get("items", []):
+            vid = it.get("id", {}).get("videoId")
+            if vid and vid not in seen:
+                seen.add(vid)
+                ids.append(vid)
+                if len(ids) >= limit:
+                    break
+
+        token = data.get("nextPageToken")
+        if not token:
+            break
+
+    return ids[:limit], None
 
 
 @st.cache_data(show_spinner=False, ttl=600)
@@ -1650,9 +1769,12 @@ with tab3:
 
             st.info(f"チャンネルID：{ch_id}")
 
-            video_ids = list_latest_video_ids_mixed(ch_id, api_key_latest, latest_n)
+            video_ids, latest_err = list_latest_video_ids_mixed_verbose(ch_id, api_key_latest, latest_n)
+            if latest_err:
+                st.error(f"最新動画IDの取得に失敗しました。{latest_err}")
+                st.stop()
             if not video_ids:
-                st.error("最新動画IDを取得できませんでした（APIキー/クォータ/権限を確認してください）。")
+                st.error("最新動画IDを取得できませんでした。")
                 st.stop()
         else:
             if not latest_playlist_url:
@@ -1666,9 +1788,12 @@ with tab3:
 
             st.info(f"プレイリストID：{playlist_id}")
 
-            video_ids = list_playlist_video_ids(playlist_id, api_key_latest, latest_n)
+            video_ids, playlist_err = list_playlist_video_ids_verbose(playlist_id, api_key_latest, latest_n)
+            if playlist_err:
+                st.error(f"プレイリスト内の動画ID取得に失敗しました。{playlist_err}")
+                st.stop()
             if not video_ids:
-                st.error("プレイリスト内の動画IDを取得できませんでした（APIキー/クォータ/権限、URLを確認してください）。")
+                st.error("プレイリスト内の動画IDを取得できませんでした。")
                 st.stop()
 
         details_map = fetch_titles_and_best_dates_bulk(video_ids, api_key_latest, TZ_NAME)
