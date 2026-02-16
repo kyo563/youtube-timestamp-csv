@@ -935,21 +935,6 @@ with tab1:
             key="ts_manual_date_raw",
         )
 
-    timestamps_input_ts = st.text_area(
-        "タイムスタンプ付き楽曲リスト",
-        placeholder="例：\n0:35 曲名A / アーティスト名A\n6:23 曲名B - アーティスト名B\n1:10:05 曲名C by アーティスト名C",
-        height=220,
-        key="timestamps_input_ts",
-    )
-
-    if not api_key_ts and manual_date_raw_ts:
-        normalized = normalize_manual_date_input(manual_date_raw_ts, TZ_NAME)
-        if normalized:
-            manual_date_ts = normalized
-            st.caption(f"解釈された公開日: {manual_date_ts}")
-        else:
-            st.error("日付の解釈に失敗しました。例: 2025/11/19, 11/19, 3月20日")
-
     if input_mode == "自動（コメントから取得）":
         st.markdown("#### コメントから候補を取り込む")
         st.caption("この手順で入力欄に反映されます。反映後は入力欄を直接編集して調整できます。")
@@ -1003,6 +988,21 @@ with tab1:
 
                 with st.expander("選択中コメント（全文）"):
                     st.text(shown[picked_idx]["text"])
+
+    timestamps_input_ts = st.text_area(
+        "タイムスタンプ付き楽曲リスト",
+        placeholder="例：\n0:35 曲名A / アーティスト名A\n6:23 曲名B - アーティスト名B\n1:10:05 曲名C by アーティスト名C",
+        height=220,
+        key="timestamps_input_ts",
+    )
+
+    if not api_key_ts and manual_date_raw_ts:
+        normalized = normalize_manual_date_input(manual_date_raw_ts, TZ_NAME)
+        if normalized:
+            manual_date_ts = normalized
+            st.caption(f"解釈された公開日: {manual_date_ts}")
+        else:
+            st.error("日付の解釈に失敗しました。例: 2025/11/19, 11/19, 3月20日")
 
     st.markdown("### 3. プレビュー確認")
     st.caption("修正したい場合は『2. タイムスタンプを用意』に戻って編集し、再度プレビューを更新してください。")
