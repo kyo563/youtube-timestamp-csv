@@ -1160,6 +1160,7 @@ with tab1:
                 st.caption("各動画の候補はその動画のvideoIdで取得しており、他動画コメントは混在しません。")
                 for i, item in enumerate(multi_items):
                     with st.expander(f"[{i+1}] {item.get('video_title') or item.get('video_id')}"):
+                        vid_key = (item.get("video_id") or f"idx{i}").strip()
                         st.code(item.get("watch_url", ""))
                         cands_i = item.get("candidates", []) or []
                         if not cands_i:
@@ -1172,26 +1173,29 @@ with tab1:
                             head = head[:60] + ("…" if len(head) > 60 else "")
                             labels_i.append(f"[{j}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {head}")
 
-                        sel_key = f"ts_multi_pick_{i}"
+                        sel_key = f"ts_multi_pick_{vid_key}"
                         default_idx = min(item.get("selected_index", 0), len(labels_i) - 1)
                         selected = st.selectbox("候補を選択", labels_i, index=default_idx, key=sel_key)
                         selected_idx = labels_i.index(selected)
                         item["selected_index"] = selected_idx
 
-                        apply_key = f"ts_multi_apply_{i}"
+                        apply_key = f"ts_multi_apply_{vid_key}"
                         if st.button("この候補を採用", key=apply_key):
                             text_i = cands_i[selected_idx].get("text", "")
                             if st.session_state.get("ts_auto_only_ts_lines", True):
                                 text_i = _extract_timestamp_lines(text_i, st.session_state.get("flip_ts", False))
                             item["applied_text"] = text_i
 
+                        text_key = f"ts_multi_text_{vid_key}"
+                        if text_key not in st.session_state:
+                            st.session_state[text_key] = item.get("applied_text", "")
+
                         st.text_area(
                             "採用済みタイムスタンプ（必要なら編集）",
-                            value=item.get("applied_text", ""),
-                            key=f"ts_multi_text_{i}",
+                            key=text_key,
                             height=140,
                         )
-                        item["applied_text"] = st.session_state.get(f"ts_multi_text_{i}", item.get("applied_text", ""))
+                        item["applied_text"] = st.session_state.get(text_key, item.get("applied_text", ""))
                 st.session_state["ts_multi_items"] = multi_items
 
     st.markdown("### 3. プレビュー確認")
