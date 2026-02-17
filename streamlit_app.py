@@ -16,7 +16,7 @@ import pandas as pd
 st.set_page_config(page_title="タイムスタンプCSV出力", layout="centered")
 
 st.title("タイムスタンプ出力ツール")
-st.write("タイムスタンプCSV生成とショート動画CSV生成、最新動画一覧CSV生成")
+st.write("タイムスタンプCSV生成")
 
 DATE_TITLE_SEPARATOR = " "
 TZ_NAME = "Asia/Tokyo"
@@ -1086,33 +1086,6 @@ def resolve_channel_id_from_input(channel_input: str, api_key: str) -> Optional[
         return None
 
 
-def list_channel_videos(channel_id: str, api_key: str, limit: int = 50) -> List[str]:
-    ids: List[str] = []
-    token = None
-    while len(ids) < limit:
-        params = {
-            "part": "id",
-            "type": "video",
-            "channelId": channel_id,
-            "maxResults": 50,
-            "order": "date",
-            "key": api_key,
-        }
-        if token:
-            params["pageToken"] = token
-        data = yt_get_json("search", params, timeout=10)
-        if not data:
-            break
-        for it in data.get("items", []):
-            vid = it.get("id", {}).get("videoId")
-            if vid:
-                ids.append(vid)
-        token = data.get("nextPageToken")
-        if not token:
-            break
-    return ids[:limit]
-
-
 def iso8601_to_seconds(iso: str) -> int:
     m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso or "")
     h = int(m.group(1) or 0) if m else 0
@@ -1185,141 +1158,6 @@ def split_artist_song_from_title(title: str) -> Tuple[str, str]:
     return "N/A", t or "N/A"
 
 
-def scrape_shorts_ids_from_web(url: str, limit: int = 50) -> List[str]:
-    try:
-        pr = urllib.parse.urlparse(url)
-        base = f"{pr.scheme}://{pr.netloc}"
-        m = re.search(r"/@[^/?#]+", pr.path)
-        if m:
-            target = base + m.group(0) + "/shorts"
-        else:
-            target = base + pr.path.rstrip("/") + "/shorts"
-        html_ = requests.get(target, timeout=10, headers={"User-Agent": "Mozilla/5.0"}).text
-        vids = re.findall(r'"videoId":"([a-zA-Z0-9_-]{11})"', html_)
-        seen = set()
-        uniq = []
-        for v in vids:
-            if v not in seen:
-                seen.add(v)
-                uniq.append(v)
-            if len(uniq) >= limit:
-                break
-        return uniq
-    except Exception:
-        return []
-
-# ==============================
-# タブ3：最新動画一覧 → CSV（改）
-# ==============================
-@st.cache_data(show_spinner=False, ttl=600)
-def list_playlist_video_ids(playlist_id: str, api_key: str, limit: int) -> List[str]:
-    ids: List[str] = []
-    token = None
-    seen = set()
-
-    while len(ids) < limit:
-        params = {
-            "part": "contentDetails",
-            "playlistId": playlist_id,
-            "maxResults": 50,
-            "key": api_key,
-        }
-        if token:
-            params["pageToken"] = token
-
-        data = yt_get_json("playlistItems", params, timeout=10)
-        if not data:
-            break
-
-        for it in data.get("items", []):
-            vid = (it.get("contentDetails", {}) or {}).get("videoId")
-            if vid and vid not in seen:
-                seen.add(vid)
-                ids.append(vid)
-                if len(ids) >= limit:
-                    break
-
-        token = data.get("nextPageToken")
-        if not token:
-            break
-
-    return ids[:limit]
-
-
-@st.cache_data(show_spinner=False, ttl=600)
-def list_playlist_video_ids_verbose(playlist_id: str, api_key: str, limit: int) -> Tuple[List[str], Optional[str]]:
-    ids: List[str] = []
-    token = None
-    seen = set()
-
-    while len(ids) < limit:
-        params = {
-            "part": "contentDetails",
-            "playlistId": playlist_id,
-            "maxResults": 50,
-            "key": api_key,
-        }
-        if token:
-            params["pageToken"] = token
-
-        data, err = yt_get_json_verbose("playlistItems", params, timeout=10)
-        if err:
-            return [], err
-        if not data:
-            break
-
-        for it in data.get("items", []):
-            vid = (it.get("contentDetails", {}) or {}).get("videoId")
-            if vid and vid not in seen:
-                seen.add(vid)
-                ids.append(vid)
-                if len(ids) >= limit:
-                    break
-
-        token = data.get("nextPageToken")
-        if not token:
-            break
-
-    return ids[:limit], None
-
-
-@st.cache_data(show_spinner=False, ttl=600)
-def list_latest_video_ids_mixed(channel_id: str, api_key: str, limit: int) -> List[str]:
-    ids: List[str] = []
-    token = None
-    seen = set()
-
-    while len(ids) < limit:
-        params = {
-            "part": "id",
-            "channelId": channel_id,
-            "type": "video",
-            "order": "date",
-            "maxResults": 50,
-            "key": api_key,
-        }
-        if token:
-            params["pageToken"] = token
-
-        data = yt_get_json("search", params, timeout=10)
-        if not data:
-            break
-
-        for it in data.get("items", []):
-            vid = it.get("id", {}).get("videoId")
-            if vid and vid not in seen:
-                seen.add(vid)
-                ids.append(vid)
-                if len(ids) >= limit:
-                    break
-
-        token = data.get("nextPageToken")
-        if not token:
-            break
-
-    return ids[:limit]
-
-
 @st.cache_data(show_spinner=False, ttl=600)
 def list_latest_video_ids_mixed_verbose(channel_id: str, api_key: str, limit: int) -> Tuple[List[str], Optional[str]]:
     ids: List[str] = []
@@ -1368,7 +1206,7 @@ def fetch_titles_and_best_dates_bulk(video_ids: List[str], api_key: str, tz_name
         data = yt_get_json(
             "videos",
             {"part": "snippet,liveStreamingDetails", "id": chunk, "key": api_key},
-            timeout=10
+            timeout=10,
         )
         if not data:
             continue
@@ -1379,14 +1217,13 @@ def fetch_titles_and_best_dates_bulk(video_ids: List[str], api_key: str, tz_name
             live = it.get("liveStreamingDetails", {}) or {}
 
             title = (snip.get("title") or "").strip()
+            published_at = snip.get("publishedAt")
+            actual_start_time = live.get("actualStartTime")
+            scheduled_start_time = live.get("scheduledStartTime")
 
-            publishedAt = snip.get("publishedAt")
-            actualStartTime = live.get("actualStartTime")
-            scheduledStartTime = live.get("scheduledStartTime")
-
-            a_epoch, a_ymd = iso_utc_to_tz_epoch_and_yyyymmdd(actualStartTime, tz_name) if actualStartTime else (None, None)
-            s_epoch, s_ymd = iso_utc_to_tz_epoch_and_yyyymmdd(scheduledStartTime, tz_name) if scheduledStartTime else (None, None)
-            p_epoch, p_ymd = iso_utc_to_tz_epoch_and_yyyymmdd(publishedAt, tz_name) if publishedAt else (None, None)
+            a_epoch, a_ymd = iso_utc_to_tz_epoch_and_yyyymmdd(actual_start_time, tz_name) if actual_start_time else (None, None)
+            s_epoch, s_ymd = iso_utc_to_tz_epoch_and_yyyymmdd(scheduled_start_time, tz_name) if scheduled_start_time else (None, None)
+            p_epoch, p_ymd = iso_utc_to_tz_epoch_and_yyyymmdd(published_at, tz_name) if published_at else (None, None)
 
             if a_epoch and a_ymd:
                 epoch = a_epoch
@@ -1414,6 +1251,7 @@ def fetch_titles_and_best_dates_bulk(video_ids: List[str], api_key: str, tz_name
 
     return out
 
+
 # ==============================
 # 共有APIキー入力
 # ==============================
@@ -1431,7 +1269,7 @@ st.text_input(
 # ==============================
 # タブレイアウト
 # ==============================
-tab1, tab2, tab3 = st.tabs(["⏱ タイムスタンプCSV", "🎬 Shorts→CSV", "🆕 最新動画→CSV"])
+tab1, = st.tabs(["⏱ タイムスタンプCSV"])
 
 # ---------------- タブ1 ----------------
 with tab1:
@@ -1878,285 +1716,3 @@ with tab1:
     with st.expander("👀 サンプル入力のヒント"):
         st.markdown("- URL例: `https://www.youtube.com/watch?v=dQw4w9WgXcQ`")
         st.markdown("- 行書式: `MM:SS` または `HH:MM:SS` + 半角スペース + タイトル（区切り ` - `, ` / `, ` by ` など）")
-
-# ---------------- タブ2 ----------------
-with tab2:
-    st.subheader("ショート → CSV")
-    st.write(
-        "動画URL、またはチャンネル情報から対象動画を取得し、リンクを生成します。"
-    )
-
-    channel_input = st.text_input(
-        "入力（チャンネルURL/ID、プレイリストURL、動画URL）",
-        placeholder="https://www.youtube.com/@Google / https://www.youtube.com/playlist?list=... / https://www.youtube.com/watch?v=...",
-        key="shorts_channel_input",
-    )
-    max_items = st.slider(
-        "取得件数（上限）",
-        min_value=5,
-        max_value=200,
-        value=50,
-        step=5,
-        key="shorts_max_items",
-    )
-
-    api_key_shorts = resolve_api_key()
-
-    run = st.button("実行（ショート取得→推定→CSV生成）", key="shorts_run")
-
-    if run:
-        if not channel_input:
-            st.error("チャンネルURL/ID、プレイリストURL、または動画URLを入力してください。")
-        else:
-            try:
-                video_ids: List[str] = []
-                titles: Dict[str, str] = {}
-                ymd_map: Dict[str, Optional[str]] = {}
-                input_text = channel_input.strip()
-                input_video_id = extract_video_id(input_text)
-                input_playlist_id = extract_playlist_id(input_text)
-
-                if input_video_id:
-                    st.info("単体URLを検出しました。取得件数は常に1件です。")
-                    video_ids = [input_video_id]
-                    if api_key_shorts:
-                        metas = fetch_video_meta(video_ids, api_key_shorts)
-                        if metas:
-                            titles = {m["videoId"]: m["title"] for m in metas if m.get("videoId")}
-                            ymd_map = {m["videoId"]: m["yyyymmdd"] for m in metas if m.get("videoId")}
-                    if not titles.get(input_video_id):
-                        try:
-                            j = requests.get(
-                                "https://www.youtube.com/oembed",
-                                params={"url": f"https://www.youtube.com/watch?v={input_video_id}", "format": "json"},
-                                timeout=6
-                            ).json()
-                            titles[input_video_id] = (j.get("title") or "").strip() or "YouTube動画"
-                        except Exception:
-                            titles[input_video_id] = "YouTube動画"
-                    if input_video_id not in ymd_map:
-                        ymd_map[input_video_id] = None
-
-                elif input_playlist_id:
-                    if not api_key_shorts:
-                        st.error("プレイリストURLの取得にはAPIキーが必要です。")
-                        st.stop()
-                    st.info(f"プレイリストIDを検出しました：{input_playlist_id}")
-
-                    ids, playlist_err = list_playlist_video_ids_verbose(input_playlist_id, api_key_shorts, max_items)
-                    if playlist_err:
-                        st.error(f"プレイリスト内の動画ID取得に失敗しました。{playlist_err}")
-                        st.stop()
-
-                    video_ids = ids[:max_items]
-                    metas = fetch_video_meta(video_ids, api_key_shorts)
-                    titles = {m["videoId"]: m["title"] for m in metas if m.get("videoId")}
-                    ymd_map = {m["videoId"]: m["yyyymmdd"] for m in metas if m.get("videoId")}
-
-                elif api_key_shorts:
-                    ch_id = resolve_channel_id_from_input(input_text, api_key_shorts)
-                    if not ch_id:
-                        st.error("チャンネルIDを特定できませんでした（入力形式を確認してください）。")
-                        st.stop()
-                    st.info(f"チャンネルIDを特定しました：{ch_id}")
-
-                    ids = list_channel_videos(ch_id, api_key_shorts, limit=max_items * 2)
-                    metas = fetch_video_meta(ids, api_key_shorts)
-
-                    shorts = [m for m in metas if m["seconds"] <= 61]
-                    shorts = shorts[:max_items]
-                    video_ids = [m["videoId"] for m in shorts]
-                    titles = {m["videoId"]: m["title"] for m in shorts}
-                    ymd_map = {m["videoId"]: m["yyyymmdd"] for m in shorts}
-                else:
-                    st.warning("APIキー未設定のため、チャンネルURL入力時のみWebページからの簡易抽出で試行します（公開日は取得できません）。")
-                    video_ids = scrape_shorts_ids_from_web(input_text, limit=max_items)
-                    for vid in video_ids:
-                        try:
-                            j = requests.get(
-                                "https://www.youtube.com/oembed",
-                                params={"url": f"https://www.youtube.com/watch?v={vid}", "format": "json"},
-                                timeout=6
-                            ).json()
-                            titles[vid] = (j.get("title") or "").strip()
-                        except Exception:
-                            titles[vid] = ""
-                        ymd_map[vid] = None
-
-                if not video_ids:
-                    st.error("対象動画が見つかりませんでした。")
-                    st.stop()
-
-                rows = [["アーティスト名", "楽曲名", "", "ショート動画"]]
-                preview = []
-                for vid in video_ids:
-                    title = titles.get(vid, "") or "ショート動画"
-                    artist, song = split_artist_song_from_title(title)
-                    link = f"https://www.youtube.com/watch?v={vid}"
-
-                    ymd = ymd_map.get(vid)
-                    label = f"{ymd}{DATE_TITLE_SEPARATOR}{title}" if ymd else title
-                    hyperlink = make_excel_hyperlink(link, label)
-
-                    rows.append([artist, song, "ショート", hyperlink])
-                    preview.append({
-                        "videoId": vid,
-                        "yyyymmdd": ymd or "",
-                        "title": title,
-                        "artist": artist,
-                        "song": song,
-                        "video_url": link
-                    })
-
-                st.success(f"取得・推定完了：{len(preview)} 件")
-                st.dataframe(pd.DataFrame(preview), use_container_width=True)
-
-                csv_text = to_csv(rows)
-                st.download_button(
-                    label="CSVをダウンロード",
-                    data=csv_text.encode("utf-8-sig"),
-                    file_name="shorts_songs.csv",
-                    mime="text/csv"
-                )
-
-            except Exception as e:
-                st.error(f"エラー: {e}")
-
-# ---------------- タブ3 ----------------
-with tab3:
-    st.subheader("投稿動画情報取得")
-    st.write(
-        "チャンネルの最新n件、またはプレイリスト内の動画について動画情報をCSV出力します。"
-    )
-
-    latest_mode = st.radio(
-        "取得対象",
-        ["チャンネルの最新動画", "プレイリスト"],
-        horizontal=True,
-        key="latest_mode",
-    )
-
-    if latest_mode == "チャンネルの最新動画":
-        latest_channel_input = st.text_input(
-            "チャンネルのURLまたはチャンネルID（UC... / @handle / URL）",
-            placeholder="https://www.youtube.com/@Google または UCxxxxxxxxxxxxxxxxxxxxxx",
-            key="latest_channel_input",
-        )
-        latest_playlist_url = ""
-    else:
-        latest_playlist_url = st.text_input(
-            "プレイリストのURL（watch?v=…&list=… でも可）",
-            placeholder="https://www.youtube.com/playlist?list=PLxxxxxxxx",
-            key="latest_playlist_url",
-        )
-        latest_channel_input = ""
-
-    latest_n = st.slider(
-        "取得件数（n）",
-        min_value=5,
-        max_value=500,
-        value=50,
-        step=5,
-        key="latest_n",
-    )
-
-    sort_choice = st.radio(
-        "並び順",
-        ["公開日で降順（最新が上）", "プレイリスト登録順を保持（ソートしない）"],
-        index=0,
-        help="プレイリスト利用時に登録順を尊重したい場合は『プレイリスト登録順』を選択してください。",
-        key="latest_sort_choice",
-    )
-
-    api_key_latest = resolve_api_key()
-
-    run_latest = st.button("実行（最新動画取得→CSV生成）", key="latest_run")
-
-    if run_latest:
-        if not api_key_latest:
-            st.error("このタブはAPIキーが必須です。")
-            st.stop()
-
-        keep_playlist_order = latest_mode == "プレイリスト" and sort_choice == "プレイリスト登録順を保持（ソートしない）"
-
-        if latest_mode == "チャンネルの最新動画":
-            if not latest_channel_input:
-                st.error("チャンネルURLまたはチャンネルIDを入力してください。")
-                st.stop()
-
-            ch_id = resolve_channel_id_from_input(latest_channel_input, api_key_latest)
-            if not ch_id:
-                st.error("チャンネルIDを特定できませんでした（UC... /channel/UC... /@handle / URL を確認してください）。")
-                st.stop()
-
-            st.info(f"チャンネルID：{ch_id}")
-
-            video_ids, latest_err = list_latest_video_ids_mixed_verbose(ch_id, api_key_latest, latest_n)
-            if latest_err:
-                st.error(f"最新動画IDの取得に失敗しました。{latest_err}")
-                st.stop()
-            if not video_ids:
-                st.error("最新動画IDを取得できませんでした。")
-                st.stop()
-        else:
-            if not latest_playlist_url:
-                st.error("プレイリストURLを入力してください。")
-                st.stop()
-
-            playlist_id = extract_playlist_id(latest_playlist_url)
-            if not playlist_id:
-                st.error("URLから playlistId を抽出できませんでした。list=XXXX を含むURLを指定してください。")
-                st.stop()
-
-            st.info(f"プレイリストID：{playlist_id}")
-
-            video_ids, playlist_err = list_playlist_video_ids_verbose(playlist_id, api_key_latest, latest_n)
-            if playlist_err:
-                st.error(f"プレイリスト内の動画ID取得に失敗しました。{playlist_err}")
-                st.stop()
-            if not video_ids:
-                st.error("プレイリスト内の動画IDを取得できませんでした。")
-                st.stop()
-
-        details_map = fetch_titles_and_best_dates_bulk(video_ids, api_key_latest, TZ_NAME)
-
-        records = []
-        skipped = 0
-        for vid in video_ids:
-            d = details_map.get(vid, {})
-            title = d.get("title", "") or ""
-            ymd = d.get("yyyymmdd", "") or ""
-            src = d.get("date_source", "") or ""
-            epoch = int(d.get("sort_epoch", "0") or "0")
-            if not title and not ymd and not src and not epoch:
-                skipped += 1
-                continue
-            url2 = f"https://www.youtube.com/watch?v={vid}"
-            records.append({
-                "sort_epoch": epoch,
-                "yyyymmdd": ymd,
-                "title": title,
-                "url": url2,
-                "date_source": src,
-            })
-
-        if not keep_playlist_order:
-            records.sort(key=lambda x: x["sort_epoch"], reverse=True)
-
-        rows = [["動画タイトル", "動画URL", "公開日(yyyymmdd)"]]
-        for r in records:
-            rows.append([r["title"], r["url"], r["yyyymmdd"]])
-
-        if skipped:
-            st.warning(f"{skipped} 件の動画は詳細を取得できなかったためスキップしました（非公開/削除などの可能性があります）。")
-
-        st.success(f"取得完了：{len(records)} 件")
-        st.dataframe(pd.DataFrame(records).drop(columns=["sort_epoch"]), use_container_width=True)
-
-        csv_text = to_csv(rows)
-        st.download_button(
-            label="CSVをダウンロード",
-            data=csv_text.encode("utf-8-sig"),
-            file_name="latest_videos.csv",
-            mime="text/csv",
-        )
