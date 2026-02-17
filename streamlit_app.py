@@ -463,16 +463,16 @@ def generate_rows(
 
     video_title = fetch_video_title_from_oembed(base_watch)
 
-    date_info: Dict[str, Optional[str]] = {"chosen_yyyymmdd": None, "source": None}
-    if api_key:
-        date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
+    date_yyyymmdd: Optional[str] = None
+    date_source: Optional[str] = None
 
-    date_yyyymmdd: Optional[str] = date_info.get("chosen_yyyymmdd")
-    date_source: Optional[str] = date_info.get("source")
-
-    if not date_yyyymmdd and manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
+    if manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
         date_yyyymmdd = manual_yyyymmdd
         date_source = "manual"
+    elif api_key:
+        date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
+        date_yyyymmdd = date_info.get("chosen_yyyymmdd")
+        date_source = date_info.get("source")
 
     display_name = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{video_title}" if date_yyyymmdd else video_title
 
@@ -546,12 +546,12 @@ def build_multi_video_rows(
 
         if not ts_text:
             title = (it.get("title") or "").strip() or fetch_video_title_from_oembed(video_url)
-            date_info: Dict[str, Optional[str]] = {"chosen_yyyymmdd": None}
-            if api_key:
-                date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
-            date_yyyymmdd = date_info.get("chosen_yyyymmdd")
-            if not date_yyyymmdd and manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
+            date_yyyymmdd = None
+            if manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
                 date_yyyymmdd = manual_yyyymmdd
+            elif api_key:
+                date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
+                date_yyyymmdd = date_info.get("chosen_yyyymmdd")
 
             link = f"https://www.youtube.com/watch?v={vid}"
             label = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{title}" if date_yyyymmdd else title
@@ -600,12 +600,15 @@ def build_multi_video_preview(
 
         if not ts_text:
             title = (it.get("title") or "").strip() or fetch_video_title_from_oembed(video_url)
-            date_info: Dict[str, Optional[str]] = {"chosen_yyyymmdd": None, "source": ""}
-            if api_key:
-                date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
-            date_yyyymmdd = date_info.get("chosen_yyyymmdd")
-            if not date_yyyymmdd and manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
+            date_yyyymmdd = None
+            date_source = ""
+            if manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
                 date_yyyymmdd = manual_yyyymmdd
+                date_source = "manual"
+            elif api_key:
+                date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
+                date_yyyymmdd = date_info.get("chosen_yyyymmdd")
+                date_source = date_info.get("source") or ""
             display_name = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{title}" if date_yyyymmdd else title
             artist, song = split_artist_song_from_title(title)
             preview_rows.append({
@@ -615,7 +618,7 @@ def build_multi_video_preview(
                 "artist": artist,
                 "song": song,
                 "display_name": display_name,
-                "date_source": date_info.get("source") or ("manual" if date_yyyymmdd == manual_yyyymmdd and manual_yyyymmdd else ""),
+                "date_source": date_source,
             })
             warnings.append(f"{vid}: タイムスタンプ未入力のため、動画タイトルから1行プレビュー生成")
             continue
@@ -1359,7 +1362,7 @@ if "shared_api_key" not in st.session_state:
     st.session_state["shared_api_key"] = GLOBAL_API_KEY or ""
 
 st.text_input(
-    "YouTube APIキー（任意）",
+    "YouTube APIキー（必須）",
     key="shared_api_key",
     type="password",
     placeholder="YouTube Data API v3",
@@ -1376,6 +1379,7 @@ with tab1:
     st.subheader("タイムスタンプCSVジェネレーター")
 
     api_key_ts = resolve_api_key()
+    is_api_key_ready = bool(api_key_ts)
     flow_steps = [
         "1) 対象動画を指定（単体 / 複数）",
         "2) タイムスタンプ入力（手動/コメント取得）",
@@ -1383,6 +1387,8 @@ with tab1:
         "4) CSV生成・ダウンロード",
     ]
     st.info("\n".join(flow_steps))
+    if not is_api_key_ready:
+        st.warning("YouTube APIキーを入力すると操作できます。")
     
     target_mode = st.radio(
         "1. 対象動画の指定方法",
@@ -1414,6 +1420,7 @@ with tab1:
             "1-A. 最新動画を取得",
             key="ts_multi_fetch_latest",
             on_click=cb_fetch_latest_multi_video_candidates,
+            disabled=not is_api_key_ready,
         )
 
     if st.session_state.get("ts_multi_latest_err"):
@@ -1466,6 +1473,7 @@ with tab1:
             "1-C. 選択を反映",
             key="ts_apply_latest_selection",
             on_click=cb_apply_latest_selection,
+            disabled=not is_api_key_ready,
         )
 
     if target_mode == "単体":
@@ -1473,6 +1481,7 @@ with tab1:
             "動画URL（単体）",
             key="ts_url",
             placeholder="https://www.youtube.com/watch?v=...",
+            disabled=not is_api_key_ready,
         )
         url = (st.session_state.get("ts_url", "") or "").strip()
     else:
@@ -1497,12 +1506,12 @@ with tab1:
 
     manual_date_raw_ts: str = ""
     manual_date_ts: str = ""
-    if not api_key_ts:
-        manual_date_raw_ts = st.text_input(
-            "公開日を手動指定（API未設定時のみ）",
-            placeholder="例: 2025/11/19, 11/19, 3月20日",
-            key="ts_manual_date_raw",
-        )
+    manual_date_raw_ts = st.text_input(
+        "公開日を手動指定（任意・入力時は最優先）",
+        placeholder="例: 2025/11/19, 11/19, 3月20日",
+        key="ts_manual_date_raw",
+        disabled=not is_api_key_ready,
+    )
 
     if input_mode == "自動（コメントから取得）":
         st.markdown("#### コメントから候補を取り込む")
@@ -1541,7 +1550,7 @@ with tab1:
             with col_a4:
                 st.checkbox("タイムスタンプ行のみ抽出", value=True, key="ts_auto_only_ts_lines")
 
-            st.button("2-b. コメント候補を取得", key="ts_fetch_comments_common", on_click=cb_fetch_comment_candidates_by_mode)
+            st.button("2-b. コメント候補を取得", key="ts_fetch_comments_common", on_click=cb_fetch_comment_candidates_by_mode, disabled=not is_api_key_ready)
 
             if target_mode == "単体":
                 if st.session_state.get("ts_auto_err"):
@@ -1567,6 +1576,7 @@ with tab1:
                         key="ts_auto_apply",
                         on_click=cb_apply_candidate,
                         kwargs={"index": picked_idx, "do_preview": False},
+                        disabled=not is_api_key_ready,
                     )
 
                     with st.expander("選択中コメント（全文）"):
@@ -1598,7 +1608,7 @@ with tab1:
                                 labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {head}")
                             picked = st.selectbox(f"候補（{vtitle}）", labels, key=f"ts_multi_pick_{vid}")
                             picked_idx = labels.index(picked)
-                            if st.button(f"この候補を採用（{vtitle}）", key=f"ts_multi_apply_{vid}"):
+                            if st.button(f"この候補を採用（{vtitle}）", key=f"ts_multi_apply_{vid}", disabled=not is_api_key_ready):
                                 picked_text = cands[picked_idx].get("text", "")
                                 if st.session_state.get("ts_auto_only_ts_lines", True):
                                     extracted = _extract_timestamp_lines(picked_text, st.session_state.get("flip_ts", False))
@@ -1613,6 +1623,7 @@ with tab1:
                             value=it.get("applied_text", ""),
                             height=140,
                             key=f"ts_multi_text_{vid}",
+                            disabled=not is_api_key_ready,
                         )
                         it["applied_text"] = edited
                         items[vid] = it
@@ -1624,11 +1635,12 @@ with tab1:
             placeholder="例：\n0:35 曲名A / アーティスト名A\n6:23 曲名B - アーティスト名B\n1:10:05 曲名C by アーティスト名C",
             height=220,
             key="timestamps_input_ts",
+            disabled=not is_api_key_ready,
         )
     else:
         timestamps_input_ts = ""
 
-    if not api_key_ts and manual_date_raw_ts:
+    if is_api_key_ready and manual_date_raw_ts:
         normalized = normalize_manual_date_input(manual_date_raw_ts, TZ_NAME)
         if normalized:
             manual_date_ts = normalized
@@ -1643,7 +1655,7 @@ with tab1:
     with col_p1:
         st.toggle("左右反転", value=False, key="flip_ts")
     with col_p2:
-        preview_clicked = st.button("3. プレビューを更新", key="preview_ts")
+        preview_clicked = st.button("3. プレビューを更新", key="preview_ts", disabled=not is_api_key_ready)
 
     if preview_clicked:
         _clear_ts_preview_state(clear_csv=True)
@@ -1688,7 +1700,7 @@ with tab1:
 
     st.markdown("### 4. CSV出力")
 
-    csv_clicked = st.button("4. CSV生成", key="csv_ts_common")
+    csv_clicked = st.button("4. CSV生成", key="csv_ts_common", disabled=not is_api_key_ready)
     if csv_clicked:
         if target_mode == "単体":
             timestamps_text = st.session_state.get("timestamps_input_ts", "")
