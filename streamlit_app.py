@@ -533,7 +533,7 @@ def build_multi_video_rows(
     manual_yyyymmdd: str,
     flip: bool,
 ) -> Tuple[List[List[str]], List[str]]:
-    rows: List[List[str]] = [["video_id", "video_url", "アーティスト名", "楽曲名", "", "YouTubeリンク"]]
+    rows: List[List[str]] = [["アーティスト名", "楽曲名", "", "YouTubeリンク"]]
     warnings: List[str] = []
 
     for vid in ordered_video_ids:
@@ -549,7 +549,7 @@ def build_multi_video_rows(
                 video_url, ts_text, tz_name, api_key, manual_yyyymmdd, flip
             )
             for r in single_rows[1:]:
-                rows.append([vid, video_url, r[0], r[1], r[2], r[3]])
+                rows.append([r[0], r[1], r[2], r[3]])
             if invalid:
                 warnings.append(f"{vid}: 未解析行 {len(invalid)} 件")
         except Exception as e:
