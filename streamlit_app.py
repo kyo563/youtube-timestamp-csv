@@ -1408,9 +1408,11 @@ with tab1:
 
     st.markdown("### 2. タイムスタンプを用意")
     st.caption("手動入力かコメント自動取得のどちらかを選び、最後に入力欄の内容を確認します。")
+    if "ts_input_mode" not in st.session_state:
+        st.session_state["ts_input_mode"] = "自動（コメントから取得）"
     input_mode = st.radio(
         "入力方法",
-        ["手動（貼り付け）", "自動（コメントから取得）"],
+        ["自動（コメントから取得）", "手動（貼り付け）"],
         horizontal=True,
         key="ts_input_mode",
     )
