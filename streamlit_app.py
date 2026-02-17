@@ -1291,7 +1291,7 @@ st.text_input(
     "YouTube APIキー（任意）",
     key="shared_api_key",
     type="password",
-    placeholder="PASS",
+    placeholder="YouTube Data API v3",
     help="設定すると全タブで共通利用します。",
 )
 
