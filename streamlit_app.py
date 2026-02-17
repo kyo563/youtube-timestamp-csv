@@ -1255,24 +1255,25 @@ with tab1:
         key="ts_target_mode",
         on_change=cb_on_target_mode_change,
     )
-    st.text_input(
-        "チャンネルURLまたはチャンネルID（UC... / @handle / URL）",
-        placeholder="https://www.youtube.com/@example または UCxxxxxxxxxxxxxxxxxxxxxx",
-        key="ts_multi_channel_input",
-    )
-    st.slider(
-        "取得する最新動画件数",
-        min_value=3,
-        max_value=50,
-        value=10,
-        step=1,
-        key="ts_multi_latest_n",
-    )
-    st.button(
-        "1-A. 最新動画を取得",
-        key="ts_multi_fetch_latest",
-        on_click=cb_fetch_latest_multi_video_candidates,
-    )
+    if target_mode == "複数":
+        st.text_input(
+            "チャンネルURLまたはチャンネルID（UC... / @handle / URL）",
+            placeholder="https://www.youtube.com/@example または UCxxxxxxxxxxxxxxxxxxxxxx",
+            key="ts_multi_channel_input",
+        )
+        st.slider(
+            "取得する最新動画件数",
+            min_value=3,
+            max_value=50,
+            value=10,
+            step=1,
+            key="ts_multi_latest_n",
+        )
+        st.button(
+            "1-A. 最新動画を取得",
+            key="ts_multi_fetch_latest",
+            on_click=cb_fetch_latest_multi_video_candidates,
+        )
 
     if st.session_state.get("ts_multi_latest_err"):
         st.error(st.session_state["ts_multi_latest_err"])
@@ -1280,7 +1281,7 @@ with tab1:
         st.success(st.session_state["ts_multi_latest_msg"])
 
     latest_candidates = st.session_state.get("ts_multi_latest_candidates", []) or []
-    if latest_candidates:
+    if target_mode == "複数" and latest_candidates:
         label_to_id: Dict[str, str] = {}
         options = []
         for c in latest_candidates:
@@ -1326,9 +1327,12 @@ with tab1:
             on_click=cb_apply_latest_selection,
         )
 
-    url = (st.session_state.get("ts_url", "") or "").strip()
     if target_mode == "単体":
-        st.text_input("選択中の動画URL", value=url, disabled=True)
+        st.text_input(
+            "動画URL（単体）",
+            key="ts_url",
+            placeholder="https://www.youtube.com/watch?v=...",
+        )
     else:
         multi_urls = st.session_state.get("ts_multi_urls", "") or ""
         st.text_area("選択中の動画URL（複数）", value=multi_urls, height=120, disabled=True)
