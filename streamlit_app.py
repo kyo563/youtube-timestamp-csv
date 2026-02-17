@@ -1699,8 +1699,7 @@ with tab1:
 with tab2:
     st.subheader("ショート → CSV")
     st.write(
-        "チャンネルURL/チャンネルID、プレイリストURL、または動画URLから対象動画を取得し、タイトルから **楽曲名/アーティスト名** を推定して "
-        "CSV（アーティスト名, 楽曲名, ショート動画）を生成します。"
+        "動画URL、またはチャンネル情報から対象動画を取得し、リンクを生成します。"
     )
 
     channel_input = st.text_input(
