@@ -1791,55 +1791,46 @@ with tab1:
             swap_flags = [False] * len(preview_rows)
             st.session_state["ts_row_swap_flags"] = swap_flags
 
-        st.markdown(
-            """
-            <style>
-            div[class*="st-key-ts_swap_btn_"] button {
-                min-height: 2.35rem;
-                border-radius: 0.5rem;
-            }
-            div[class*="st-key-ts_swap_btn_"] {
-                margin-bottom: 0.12rem;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True,
+        preview_with_ui = apply_row_swap_flags(preview_rows, swap_flags)
+        preview_table_rows = []
+        for idx, row in enumerate(preview_with_ui):
+            preview_table_rows.append({
+                "入替": bool(idx < len(swap_flags) and swap_flags[idx]),
+                **row,
+            })
+
+        edited_preview_df = st.data_editor(
+            pd.DataFrame(preview_table_rows),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "入替": st.column_config.CheckboxColumn("入替", help="ONでアーティスト名と楽曲名を入れ替え"),
+                "time_seconds": st.column_config.NumberColumn("秒数", width="small"),
+                "artist": st.column_config.TextColumn("アーティスト名", width="medium"),
+                "song": st.column_config.TextColumn("楽曲名", width="large"),
+                "display_name": st.column_config.TextColumn("リンク表示名", width="large"),
+                "date_source": st.column_config.TextColumn("日付ソース", width="small"),
+                "hyperlink_formula": st.column_config.TextColumn("Excel用リンク式", width="large"),
+                "video_id": st.column_config.TextColumn("video_id", width="small"),
+                "video_url": st.column_config.LinkColumn("video_url", width="large"),
+            },
+            disabled=[
+                "time_seconds",
+                "artist",
+                "song",
+                "display_name",
+                "date_source",
+                "hyperlink_formula",
+                "video_id",
+                "video_url",
+            ],
+            key="ts_preview_editor",
         )
 
-        controls_col, preview_col = st.columns([1, 8], gap="small")
-
-        with controls_col:
-            with st.container(border=True):
-                st.caption("行入替")
-                st.markdown("<div style='height: 2.2rem;'></div>", unsafe_allow_html=True)
-                for idx in range(len(preview_rows)):
-                    is_swapped = idx < len(swap_flags) and swap_flags[idx]
-                    button_label = "↔ ✅" if is_swapped else "↔"
-                    if st.button(button_label, key=f"ts_swap_btn_{idx}", use_container_width=True):
-                        updated_flags = list(swap_flags)
-                        updated_flags[idx] = not is_swapped
-                        st.session_state["ts_row_swap_flags"] = updated_flags
-                        st.rerun()
-
-        with preview_col:
-            preview_with_ui = apply_row_swap_flags(preview_rows, swap_flags)
-            st.data_editor(
-                pd.DataFrame(preview_with_ui),
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "time_seconds": st.column_config.NumberColumn("秒数", width="small"),
-                    "artist": st.column_config.TextColumn("アーティスト名", width="medium"),
-                    "song": st.column_config.TextColumn("楽曲名", width="large"),
-                    "display_name": st.column_config.TextColumn("リンク表示名", width="large"),
-                    "date_source": st.column_config.TextColumn("日付ソース", width="small"),
-                    "hyperlink_formula": st.column_config.TextColumn("Excel用リンク式", width="large"),
-                    "video_id": st.column_config.TextColumn("video_id", width="small"),
-                    "video_url": st.column_config.LinkColumn("video_url", width="large"),
-                },
-                disabled=True,
-                key="ts_preview_editor",
-            )
+        new_swap_flags = edited_preview_df["入替"].fillna(False).astype(bool).tolist() if "入替" in edited_preview_df else []
+        if new_swap_flags != swap_flags:
+            st.session_state["ts_row_swap_flags"] = new_swap_flags
+            st.rerun()
 
         st.caption(f"動画タイトル：{st.session_state.get('ts_preview_title', '')}")
 
