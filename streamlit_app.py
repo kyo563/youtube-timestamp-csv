@@ -688,6 +688,7 @@ def cb_fetch_multi_video_candidates() -> None:
         if not vid:
             fail_count += 1
             continue
+        video_title = fetch_video_title_from_oembed(u)
         cands, err = fetch_timestamp_comment_candidates(
             video_id=vid,
             api_key=api_key,
@@ -697,7 +698,13 @@ def cb_fetch_multi_video_candidates() -> None:
         )
         if err:
             fail_count += 1
-            items[vid] = {"url": u, "candidates": [], "applied_text": "", "error": err}
+            items[vid] = {
+                "url": u,
+                "title": video_title,
+                "candidates": [],
+                "applied_text": "",
+                "error": err,
+            }
             continue
 
         default_text = cands[0]["text"] if cands else ""
@@ -708,6 +715,7 @@ def cb_fetch_multi_video_candidates() -> None:
 
         items[vid] = {
             "url": u,
+            "title": video_title,
             "candidates": cands,
             "applied_text": default_text,
             "error": "",
@@ -1437,7 +1445,8 @@ with tab1:
                 for vid in ordered_ids:
                     it = items.get(vid) or {}
                     vurl = it.get("url") or f"https://www.youtube.com/watch?v={vid}"
-                    with st.expander(f"動画 {vid}"):
+                    vtitle = (it.get("title") or "").strip() or f"動画 {vid}"
+                    with st.expander(vtitle):
                         st.caption(vurl)
                         if it.get("error"):
                             st.warning(it["error"])
@@ -1450,9 +1459,9 @@ with tab1:
                                 head = (c.get("text", "").splitlines()[0] if c.get("text") else "").strip()
                                 head = head[:60] + ("…" if len(head) > 60 else "")
                                 labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {head}")
-                            picked = st.selectbox(f"候補（{vid}）", labels, key=f"ts_multi_pick_{vid}")
+                            picked = st.selectbox(f"候補（{vtitle}）", labels, key=f"ts_multi_pick_{vid}")
                             picked_idx = labels.index(picked)
-                            if st.button(f"この候補を採用（{vid}）", key=f"ts_multi_apply_{vid}"):
+                            if st.button(f"この候補を採用（{vtitle}）", key=f"ts_multi_apply_{vid}"):
                                 picked_text = cands[picked_idx].get("text", "")
                                 if st.session_state.get("ts_auto_only_ts_lines", True):
                                     extracted = _extract_timestamp_lines(picked_text, st.session_state.get("flip_ts", False))
@@ -1463,7 +1472,7 @@ with tab1:
                                 st.session_state["ts_multi_items"] = items
 
                         edited = st.text_area(
-                            f"採用テキスト（{vid}）",
+                            f"採用テキスト（{vtitle}）",
                             value=it.get("applied_text", ""),
                             height=140,
                             key=f"ts_multi_text_{vid}",
