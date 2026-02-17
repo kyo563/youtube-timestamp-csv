@@ -112,9 +112,23 @@ def explain_youtube_api_exception(exc: Exception) -> str:
 
 
 def to_csv(rows: List[List[str]]) -> str:
+    """2次元配列を CSV 文字列へ変換する。"""
     buf = io.StringIO()
     csv.writer(buf, quoting=csv.QUOTE_ALL).writerows(rows)
     return buf.getvalue()
+
+
+def sanitize_download_filename(video_title: str, default_name: str = "youtube_song_list") -> str:
+    """動画タイトルからダウンロード用に安全なファイル名を作成する。"""
+    download_name = re.sub(r'[\\/:*?"<>|\x00-\x1F]', "_", video_title or "").strip().strip(".") or default_name
+    return download_name[:100]
+
+
+def save_csv_to_session(rows: List[List[str]], file_name: str) -> None:
+    """CSV を UTF-8 BOM 付きで session_state に保存する。"""
+    csv_content = to_csv(rows)
+    st.session_state["ts_csv_bytes"] = csv_content.encode("utf-8-sig")
+    st.session_state["ts_csv_name"] = file_name
 
 
 def make_excel_hyperlink(url_: str, label: str) -> str:
@@ -1544,6 +1558,7 @@ if is_api_key_ready and manual_date_raw_ts:
         st.error("日付の解釈に失敗しました。例: 2025/11/19, 11/19, 3月20日")
 
 st.markdown("### 3. プレビュー確認")
+# ここでは「CSV出力前に解析結果を確認・微調整する」ためのプレビューを作る。
 st.caption("修正したい場合は『2. タイムスタンプを用意』に戻って編集し、再度プレビューを更新してください。")
 
 col_p1, col_p2 = st.columns([1, 1])
@@ -1553,6 +1568,7 @@ with col_p2:
     preview_clicked = st.button("3. プレビューを更新", key="preview_ts", disabled=not is_api_key_ready)
 
 if preview_clicked:
+    # 新しいプレビューを作る前に、前回のプレビュー/CSVを初期化して状態を揃える。
     _clear_ts_preview_state(clear_csv=True)
 
     if target_mode == "単体":
@@ -1596,6 +1612,7 @@ if preview_clicked:
             st.error(f"エラー: {e}")
 
 st.markdown("### 4. CSV出力")
+# ここではプレビュー済みデータを CSV に変換し、ダウンロードボタンへ受け渡す。
 
 csv_clicked = st.button("4. CSV生成", key="csv_ts_common", disabled=not is_api_key_ready)
 if csv_clicked:
@@ -1613,14 +1630,8 @@ if csv_clicked:
                 )
                 swap_flags = st.session_state.get("ts_row_swap_flags", []) or []
                 rows = apply_row_swap_flags_to_csv_rows(rows, swap_flags)
-                csv_content = to_csv(rows)
-                download_name = re.sub(r'[\\/:*?"<>|\x00-\x1F]', "_", video_title or "").strip().strip(".") or "youtube_song_list"
-                if len(download_name) > 100:
-                    download_name = download_name[:100]
-                download_name += ".csv"
-
-                st.session_state["ts_csv_bytes"] = csv_content.encode("utf-8-sig")
-                st.session_state["ts_csv_name"] = download_name
+                download_name = f"{sanitize_download_filename(video_title)}.csv"
+                save_csv_to_session(rows, download_name)
                 st.success("CSVを生成しました。下のボタンからダウンロードできます。")
                 if invalid:
                     st.info(f"未解析行：{len(invalid)}件。")
@@ -1638,9 +1649,7 @@ if csv_clicked:
             )
             swap_flags = st.session_state.get("ts_row_swap_flags", []) or []
             rows = apply_row_swap_flags_to_csv_rows(rows, swap_flags)
-            csv_content = to_csv(rows)
-            st.session_state["ts_csv_bytes"] = csv_content.encode("utf-8-sig")
-            st.session_state["ts_csv_name"] = "timestamp_multi_videos.csv"
+            save_csv_to_session(rows, "timestamp_multi_videos.csv")
             st.success(f"CSVを生成しました。出力行数: {len(rows)-1}")
             for w in warnings:
                 st.caption(f"- {w}")
