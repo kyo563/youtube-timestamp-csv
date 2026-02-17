@@ -540,8 +540,25 @@ def build_multi_video_rows(
         it = items.get(vid) or {}
         video_url = (it.get("url") or "").strip()
         ts_text = (it.get("applied_text") or "").strip()
-        if not video_url or not ts_text:
-            warnings.append(f"{vid}: 入力テキストが空のためスキップ")
+        if not video_url:
+            warnings.append(f"{vid}: 動画URLが空のためスキップ")
+            continue
+
+        if not ts_text:
+            title = (it.get("title") or "").strip() or fetch_video_title_from_oembed(video_url)
+            date_info: Dict[str, Optional[str]] = {"chosen_yyyymmdd": None}
+            if api_key:
+                date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
+            date_yyyymmdd = date_info.get("chosen_yyyymmdd")
+            if not date_yyyymmdd and manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
+                date_yyyymmdd = manual_yyyymmdd
+
+            link = f"https://www.youtube.com/watch?v={vid}"
+            label = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{title}" if date_yyyymmdd else title
+            hyperlink = make_excel_hyperlink(link, label)
+            artist, song = split_artist_song_from_title(title)
+            rows.append([artist, song, "", hyperlink])
+            warnings.append(f"{vid}: タイムスタンプ未入力のため、動画タイトルから1行生成")
             continue
 
         try:
@@ -577,8 +594,30 @@ def build_multi_video_preview(
         it = items.get(vid) or {}
         video_url = (it.get("url") or "").strip()
         ts_text = (it.get("applied_text") or "").strip()
-        if not video_url or not ts_text:
-            warnings.append(f"{vid}: 入力テキストが空のためスキップ")
+        if not video_url:
+            warnings.append(f"{vid}: 動画URLが空のためスキップ")
+            continue
+
+        if not ts_text:
+            title = (it.get("title") or "").strip() or fetch_video_title_from_oembed(video_url)
+            date_info: Dict[str, Optional[str]] = {"chosen_yyyymmdd": None, "source": ""}
+            if api_key:
+                date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
+            date_yyyymmdd = date_info.get("chosen_yyyymmdd")
+            if not date_yyyymmdd and manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
+                date_yyyymmdd = manual_yyyymmdd
+            display_name = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{title}" if date_yyyymmdd else title
+            artist, song = split_artist_song_from_title(title)
+            preview_rows.append({
+                "video_id": vid,
+                "video_url": video_url,
+                "time_seconds": None,
+                "artist": artist,
+                "song": song,
+                "display_name": display_name,
+                "date_source": date_info.get("source") or ("manual" if date_yyyymmdd == manual_yyyymmdd and manual_yyyymmdd else ""),
+            })
+            warnings.append(f"{vid}: タイムスタンプ未入力のため、動画タイトルから1行プレビュー生成")
             continue
 
         try:
@@ -803,7 +842,10 @@ def cb_fetch_latest_multi_video_candidates() -> None:
         return
 
     latest_n = int(st.session_state.get("ts_multi_latest_n", 10))
-    video_ids, latest_err = list_latest_video_ids_mixed_verbose(channel_id, api_key, latest_n)
+    shorts_only = bool(st.session_state.get("ts_multi_shorts_only", False))
+    fetch_n = min(max(latest_n * 4, latest_n), 200) if shorts_only else latest_n
+
+    video_ids, latest_err = list_latest_video_ids_mixed_verbose(channel_id, api_key, fetch_n)
     if latest_err:
         st.session_state["ts_multi_latest_err"] = f"最新動画の取得に失敗しました。{latest_err}"
         st.session_state["ts_multi_latest_candidates"] = []
@@ -812,6 +854,18 @@ def cb_fetch_latest_multi_video_candidates() -> None:
         st.session_state["ts_multi_latest_err"] = "最新動画を取得できませんでした。"
         st.session_state["ts_multi_latest_candidates"] = []
         return
+
+    if shorts_only:
+        metas = fetch_video_meta(video_ids, api_key)
+        short_ids = [m.get("videoId") for m in metas if (m.get("seconds") or 0) <= 61 and m.get("videoId")]
+        allowed = set(short_ids)
+        video_ids = [vid for vid in video_ids if vid in allowed][:latest_n]
+        if not video_ids:
+            st.session_state["ts_multi_latest_err"] = "ショート動画（61秒以下）を取得できませんでした。"
+            st.session_state["ts_multi_latest_candidates"] = []
+            return
+    else:
+        video_ids = video_ids[:latest_n]
 
     details = fetch_titles_and_best_dates_bulk(video_ids, api_key, TZ_NAME)
     candidates = []
@@ -830,7 +884,8 @@ def cb_fetch_latest_multi_video_candidates() -> None:
 
     st.session_state["ts_multi_latest_candidates"] = candidates
     st.session_state["ts_multi_latest_selected_ids"] = [c["videoId"] for c in candidates]
-    st.session_state["ts_multi_latest_msg"] = f"最新動画 {len(candidates)} 件を取得しました。"
+    suffix = "（ショートのみ）" if shorts_only else ""
+    st.session_state["ts_multi_latest_msg"] = f"最新動画 {len(candidates)} 件を取得しました。{suffix}"
     st.session_state.pop("ts_multi_latest_err", None)
 
 
@@ -842,6 +897,7 @@ def cb_apply_latest_selection() -> None:
     target_mode = st.session_state.get("ts_target_mode")
     candidates = st.session_state.get("ts_multi_latest_candidates", []) or []
     id_to_url = {c.get("videoId"): c.get("url", "") for c in candidates}
+    id_to_title = {c.get("videoId"): c.get("title", "") for c in candidates}
 
     if target_mode == "単体":
         selected_id = (st.session_state.get("ts_single_latest_selected_id", "") or "").strip()
@@ -862,6 +918,21 @@ def cb_apply_latest_selection() -> None:
         return
 
     st.session_state["ts_multi_urls"] = "\n".join(selected_urls)
+    st.session_state["ts_multi_order"] = selected_ids
+    items = st.session_state.get("ts_multi_items", {}) or {}
+    for vid in selected_ids:
+        if vid not in items:
+            items[vid] = {
+                "url": id_to_url.get(vid, ""),
+                "title": id_to_title.get(vid, ""),
+                "candidates": [],
+                "applied_text": "",
+                "error": "",
+            }
+        else:
+            items[vid]["url"] = id_to_url.get(vid, items[vid].get("url", ""))
+            items[vid]["title"] = id_to_title.get(vid, items[vid].get("title", ""))
+    st.session_state["ts_multi_items"] = items
     st.session_state["ts_multi_latest_msg"] = f"{len(selected_urls)} 件のURLを反映しました。"
     st.session_state.pop("ts_multi_latest_err", None)
 
@@ -1334,6 +1405,11 @@ with tab1:
             step=1,
             key="ts_multi_latest_n",
         )
+        st.toggle(
+            "ショート動画のみ（61秒以下）",
+            value=False,
+            key="ts_multi_shorts_only",
+        )
         st.button(
             "1-A. 最新動画を取得",
             key="ts_multi_fetch_latest",
@@ -1408,6 +1484,8 @@ with tab1:
 
     st.markdown("### 2. タイムスタンプを用意")
     st.caption("手動入力かコメント自動取得のどちらかを選び、最後に入力欄の内容を確認します。")
+    if target_mode == "複数":
+        st.caption("複数モードでは、タイムスタンプが空の動画は『ショートCSV互換（動画タイトルから1行生成）』として出力されます。")
     if "ts_input_mode" not in st.session_state:
         st.session_state["ts_input_mode"] = "自動（コメントから取得）"
     input_mode = st.radio(
