@@ -1610,7 +1610,7 @@ with tab1:
 
     st.markdown("### 4. CSV出力")
 
-    csv_clicked = st.button("4. CSVを生成してダウンロードを有効化", key="csv_ts_common")
+    csv_clicked = st.button("4. CSV生成", key="csv_ts_common")
     if csv_clicked:
         if target_mode == "単体":
             timestamps_text = st.session_state.get("timestamps_input_ts", "")
