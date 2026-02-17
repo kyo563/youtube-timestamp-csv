@@ -476,7 +476,7 @@ def generate_rows(
 
     display_name = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{video_title}" if date_yyyymmdd else video_title
 
-    rows: List[List[str]] = [["アーティスト名", "楽曲名", "YouTubeリンク"]]
+    rows: List[List[str]] = [["アーティスト名", "楽曲名", "", "YouTubeリンク"]]
     parsed_preview: List[dict] = []
     invalid_lines: List[str] = []
 
@@ -491,7 +491,7 @@ def generate_rows(
 
         jump = f"{base_watch}&t={sec}s"
         hyperlink = make_excel_hyperlink(jump, display_name)
-        rows.append([artist, song, hyperlink])
+        rows.append([artist, song, "", hyperlink])
         parsed_preview.append({
             "time_seconds": sec,
             "artist": artist,
@@ -533,7 +533,7 @@ def build_multi_video_rows(
     manual_yyyymmdd: str,
     flip: bool,
 ) -> Tuple[List[List[str]], List[str]]:
-    rows: List[List[str]] = [["video_id", "video_url", "アーティスト名", "楽曲名", "YouTubeリンク"]]
+    rows: List[List[str]] = [["video_id", "video_url", "アーティスト名", "楽曲名", "", "YouTubeリンク"]]
     warnings: List[str] = []
 
     for vid in ordered_video_ids:
@@ -549,7 +549,7 @@ def build_multi_video_rows(
                 video_url, ts_text, tz_name, api_key, manual_yyyymmdd, flip
             )
             for r in single_rows[1:]:
-                rows.append([vid, video_url, r[0], r[1], r[2]])
+                rows.append([vid, video_url, r[0], r[1], r[2], r[3]])
             if invalid:
                 warnings.append(f"{vid}: 未解析行 {len(invalid)} 件")
         except Exception as e:
@@ -1669,7 +1669,7 @@ with tab2:
                     st.error("ショート動画が見つかりませんでした。")
                     st.stop()
 
-                rows = [["アーティスト名", "楽曲名", "ショート動画"]]
+                rows = [["アーティスト名", "楽曲名", "", "ショート動画"]]
                 preview = []
                 for vid in video_ids:
                     title = titles.get(vid, "") or "ショート動画"
@@ -1680,7 +1680,7 @@ with tab2:
                     label = f"{ymd}{DATE_TITLE_SEPARATOR}{title}" if ymd else title
                     hyperlink = make_excel_hyperlink(link, label)
 
-                    rows.append([artist, song, hyperlink])
+                    rows.append([artist, song, "", hyperlink])
                     preview.append({
                         "videoId": vid,
                         "yyyymmdd": ymd or "",
