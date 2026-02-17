@@ -561,6 +561,52 @@ def build_multi_video_rows(
     return rows, warnings
 
 
+def build_multi_video_preview(
+    items: Dict[str, dict],
+    ordered_video_ids: List[str],
+    tz_name: str,
+    api_key: str,
+    manual_yyyymmdd: str,
+    flip: bool,
+) -> Tuple[List[dict], List[str], List[str]]:
+    preview_rows: List[dict] = []
+    invalid_lines: List[str] = []
+    warnings: List[str] = []
+
+    for vid in ordered_video_ids:
+        it = items.get(vid) or {}
+        video_url = (it.get("url") or "").strip()
+        ts_text = (it.get("applied_text") or "").strip()
+        if not video_url or not ts_text:
+            warnings.append(f"{vid}: 入力テキストが空のためスキップ")
+            continue
+
+        try:
+            _, parsed_preview, invalid, _ = generate_rows(
+                video_url, ts_text, tz_name, api_key, manual_yyyymmdd, flip
+            )
+            for p in parsed_preview:
+                preview_rows.append({
+                    "video_id": vid,
+                    "video_url": video_url,
+                    "time_seconds": p.get("time_seconds"),
+                    "artist": p.get("artist"),
+                    "song": p.get("song"),
+                    "display_name": p.get("display_name"),
+                    "date_source": p.get("date_source"),
+                })
+            if invalid:
+                invalid_lines.extend([f"[{vid}] {line}" for line in invalid])
+                warnings.append(f"{vid}: 未解析行 {len(invalid)} 件")
+        except Exception as e:
+            warnings.append(f"{vid}: 解析失敗（{e}）")
+
+    if not preview_rows:
+        raise ValueError("プレビュー可能な行がありません。各動画のタイムスタンプテキストを確認してください。")
+
+    return preview_rows, invalid_lines, warnings
+
+
 # ==============================
 # tab1: コールバック（重要：widget key を安全に更新する）
 # ==============================
@@ -576,10 +622,21 @@ def _get_manual_yyyymmdd() -> str:
     return normalized or ""
 
 
+def _clear_ts_preview_state(clear_csv: bool = False) -> None:
+    for k in ["ts_preview_df", "ts_preview_invalid", "ts_preview_title", "ts_last_rows"]:
+        st.session_state.pop(k, None)
+
+    if clear_csv:
+        st.session_state.pop("ts_csv_bytes", None)
+        st.session_state.pop("ts_csv_name", None)
+
+
 def _set_preview_from_text(url: str, ts_text: str) -> None:
     flip = st.session_state.get("flip_ts", False)
     api_key = _get_ts_api_key()
     manual_date = _get_manual_yyyymmdd()
+
+    _clear_ts_preview_state()
 
     rows, preview, invalid, video_title = generate_rows(
         url, ts_text, TZ_NAME, api_key, manual_date, flip
@@ -1499,23 +1556,44 @@ with tab1:
     with col_p2:
         preview_clicked = st.button("3. プレビューを更新", key="preview_ts")
 
-    if preview_clicked and target_mode == "単体":
-        timestamps_text = st.session_state.get("timestamps_input_ts", "")
-        flip = st.session_state.get("flip_ts", False)
-        if not url or not timestamps_text:
-            st.error("URLと楽曲リストを入力してください。")
-        elif not is_valid_youtube_url(url):
-            st.error("有効なYouTube URLを入力してください。")
+    if preview_clicked:
+        _clear_ts_preview_state(clear_csv=True)
+
+        if target_mode == "単体":
+            timestamps_text = st.session_state.get("timestamps_input_ts", "")
+            flip = st.session_state.get("flip_ts", False)
+            if not url or not timestamps_text:
+                st.error("URLと楽曲リストを入力してください。")
+            elif not is_valid_youtube_url(url):
+                st.error("有効なYouTube URLを入力してください。")
+            else:
+                try:
+                    rows, preview, invalid, video_title = generate_rows(
+                        url, timestamps_text, TZ_NAME, api_key_ts, manual_date_ts, flip
+                    )
+                    st.session_state["ts_preview_df"] = preview
+                    st.session_state["ts_preview_invalid"] = invalid
+                    st.session_state["ts_preview_title"] = video_title
+                    st.session_state["ts_last_rows"] = rows
+                    st.success(f"解析成功：{len(preview)}件（未解析 {len(invalid)}件）")
+                except Exception as e:
+                    st.error(f"エラー: {e}")
         else:
             try:
-                rows, preview, invalid, video_title = generate_rows(
-                    url, timestamps_text, TZ_NAME, api_key_ts, manual_date_ts, flip
+                preview_rows, invalid_lines, warnings = build_multi_video_preview(
+                    items=st.session_state.get("ts_multi_items", {}) or {},
+                    ordered_video_ids=st.session_state.get("ts_multi_order", []) or [],
+                    tz_name=TZ_NAME,
+                    api_key=api_key_ts,
+                    manual_yyyymmdd=manual_date_ts,
+                    flip=st.session_state.get("flip_ts", False),
                 )
-                st.session_state["ts_preview_df"] = preview
-                st.session_state["ts_preview_invalid"] = invalid
-                st.session_state["ts_preview_title"] = video_title
-                st.session_state["ts_last_rows"] = rows
-                st.success(f"解析成功：{len(preview)}件（未解析 {len(invalid)}件）")
+                st.session_state["ts_preview_df"] = preview_rows
+                st.session_state["ts_preview_invalid"] = invalid_lines
+                st.session_state["ts_preview_title"] = f"複数動画プレビュー（{len(preview_rows)}行）"
+                st.success(f"解析成功：{len(preview_rows)}件（未解析 {len(invalid_lines)}件）")
+                for w in warnings:
+                    st.caption(f"- {w}")
             except Exception as e:
                 st.error(f"エラー: {e}")
 
@@ -1578,17 +1656,23 @@ with tab1:
     if "ts_preview_df" in st.session_state:
         st.subheader("プレビュー")
         df = pd.DataFrame(st.session_state["ts_preview_df"])
+        col_cfg = {
+            "time_seconds": st.column_config.NumberColumn("秒数", width="small"),
+            "artist": st.column_config.TextColumn("アーティスト名", width="medium"),
+            "song": st.column_config.TextColumn("楽曲名", width="large"),
+            "display_name": st.column_config.TextColumn("リンク表示名", width="large"),
+            "date_source": st.column_config.TextColumn("日付ソース", width="small"),
+            "hyperlink_formula": st.column_config.TextColumn("Excel用リンク式", width="large"),
+        }
+        if "video_id" in df.columns:
+            col_cfg["video_id"] = st.column_config.TextColumn("video_id", width="small")
+        if "video_url" in df.columns:
+            col_cfg["video_url"] = st.column_config.LinkColumn("video_url", width="large")
+
         st.dataframe(
             df,
             use_container_width=True,
-            column_config={
-                "time_seconds": st.column_config.NumberColumn("秒数", width="small"),
-                "artist": st.column_config.TextColumn("アーティスト名", width="medium"),
-                "song": st.column_config.TextColumn("楽曲名", width="large"),
-                "display_name": st.column_config.TextColumn("リンク表示名", width="large"),
-                "date_source": st.column_config.TextColumn("日付ソース", width="small"),
-                "hyperlink_formula": st.column_config.TextColumn("Excel用リンク式", width="large"),
-            },
+            column_config=col_cfg,
         )
 
         st.caption(f"動画タイトル：{st.session_state.get('ts_preview_title', '')}")
