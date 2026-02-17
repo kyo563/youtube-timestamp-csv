@@ -1791,18 +1791,35 @@ with tab1:
             swap_flags = [False] * len(preview_rows)
             st.session_state["ts_row_swap_flags"] = swap_flags
 
+        st.markdown(
+            """
+            <style>
+            div[class*="st-key-ts_swap_btn_"] button {
+                min-height: 2.35rem;
+                border-radius: 0.5rem;
+            }
+            div[class*="st-key-ts_swap_btn_"] {
+                margin-bottom: 0.12rem;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
         controls_col, preview_col = st.columns([1, 8], gap="small")
 
         with controls_col:
-            st.caption("行入替")
-            for idx in range(len(preview_rows)):
-                is_swapped = idx < len(swap_flags) and swap_flags[idx]
-                button_label = "↔ ✅" if is_swapped else "↔"
-                if st.button(button_label, key=f"ts_swap_btn_{idx}", use_container_width=True):
-                    updated_flags = list(swap_flags)
-                    updated_flags[idx] = not is_swapped
-                    st.session_state["ts_row_swap_flags"] = updated_flags
-                    st.rerun()
+            with st.container(border=True):
+                st.caption("行入替")
+                st.markdown("<div style='height: 2.2rem;'></div>", unsafe_allow_html=True)
+                for idx in range(len(preview_rows)):
+                    is_swapped = idx < len(swap_flags) and swap_flags[idx]
+                    button_label = "↔ ✅" if is_swapped else "↔"
+                    if st.button(button_label, key=f"ts_swap_btn_{idx}", use_container_width=True):
+                        updated_flags = list(swap_flags)
+                        updated_flags[idx] = not is_swapped
+                        st.session_state["ts_row_swap_flags"] = updated_flags
+                        st.rerun()
 
         with preview_col:
             preview_with_ui = apply_row_swap_flags(preview_rows, swap_flags)
