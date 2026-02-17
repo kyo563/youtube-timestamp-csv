@@ -122,6 +122,30 @@ def make_excel_hyperlink(url_: str, label: str) -> str:
     return f'=HYPERLINK("{url_}","{safe}")'
 
 
+def classify_content_label(
+    has_timestamps: bool,
+    video_url: str = "",
+    video_title: str = "",
+    duration_seconds: Optional[int] = None,
+) -> str:
+    if has_timestamps:
+        return "歌枠"
+
+    if duration_seconds is not None and duration_seconds <= 61:
+        return "ショート"
+
+    url_lower = (video_url or "").lower()
+    if "/shorts/" in url_lower:
+        return "ショート"
+
+    title_raw = video_title or ""
+    title_lower = title_raw.lower()
+    if "#shorts" in title_lower or "shorts" in title_lower or "ショート" in title_raw:
+        return "ショート"
+
+    return "歌ってみた"
+
+
 def is_valid_youtube_url(u: str) -> bool:
     return bool(re.match(r"^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.?be)\/.+$", u or ""))
 
@@ -491,7 +515,12 @@ def generate_rows(
 
         jump = f"{base_watch}&t={sec}s"
         hyperlink = make_excel_hyperlink(jump, display_name)
-        rows.append([artist, song, "", hyperlink])
+        content_label = classify_content_label(
+            has_timestamps=True,
+            video_url=base_watch,
+            video_title=video_title,
+        )
+        rows.append([artist, song, content_label, hyperlink])
         parsed_preview.append({
             "time_seconds": sec,
             "artist": artist,
@@ -535,6 +564,15 @@ def build_multi_video_rows(
 ) -> Tuple[List[List[str]], List[str]]:
     rows: List[List[str]] = [["アーティスト名", "楽曲名", "", "YouTubeリンク"]]
     warnings: List[str] = []
+    duration_by_video_id: Dict[str, int] = {}
+
+    if api_key and ordered_video_ids:
+        metas = fetch_video_meta(ordered_video_ids, api_key)
+        duration_by_video_id = {
+            m.get("videoId"): int(m.get("seconds") or 0)
+            for m in metas
+            if m.get("videoId")
+        }
 
     for vid in ordered_video_ids:
         it = items.get(vid) or {}
@@ -557,7 +595,13 @@ def build_multi_video_rows(
             label = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{title}" if date_yyyymmdd else title
             hyperlink = make_excel_hyperlink(link, label)
             artist, song = split_artist_song_from_title(title)
-            rows.append([artist, song, "", hyperlink])
+            content_label = classify_content_label(
+                has_timestamps=False,
+                video_url=video_url,
+                video_title=title,
+                duration_seconds=duration_by_video_id.get(vid),
+            )
+            rows.append([artist, song, content_label, hyperlink])
             warnings.append(f"{vid}: タイムスタンプ未入力のため、動画タイトルから1行生成")
             continue
 
@@ -1962,7 +2006,7 @@ with tab2:
                     label = f"{ymd}{DATE_TITLE_SEPARATOR}{title}" if ymd else title
                     hyperlink = make_excel_hyperlink(link, label)
 
-                    rows.append([artist, song, "", hyperlink])
+                    rows.append([artist, song, "ショート", hyperlink])
                     preview.append({
                         "videoId": vid,
                         "yyyymmdd": ymd or "",
