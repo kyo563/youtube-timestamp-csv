@@ -646,6 +646,28 @@ def build_multi_video_preview(
     return preview_rows, invalid_lines, warnings
 
 
+def apply_row_swap_flags(preview_rows: List[dict], swap_flags: List[bool]) -> List[dict]:
+    adjusted_rows: List[dict] = []
+    for i, row in enumerate(preview_rows):
+        copied = dict(row)
+        if i < len(swap_flags) and swap_flags[i]:
+            copied["artist"], copied["song"] = copied.get("song", "N/A"), copied.get("artist", "N/A")
+        adjusted_rows.append(copied)
+    return adjusted_rows
+
+
+def apply_row_swap_flags_to_csv_rows(rows: List[List[str]], swap_flags: List[bool]) -> List[List[str]]:
+    if not rows:
+        return rows
+    adjusted_rows: List[List[str]] = [rows[0]]
+    for i, row in enumerate(rows[1:]):
+        copied = list(row)
+        if i < len(swap_flags) and swap_flags[i] and len(copied) >= 2:
+            copied[0], copied[1] = copied[1], copied[0]
+        adjusted_rows.append(copied)
+    return adjusted_rows
+
+
 # ==============================
 # tab1: コールバック（重要：widget key を安全に更新する）
 # ==============================
@@ -662,7 +684,7 @@ def _get_manual_yyyymmdd() -> str:
 
 
 def _clear_ts_preview_state(clear_csv: bool = False) -> None:
-    for k in ["ts_preview_df", "ts_preview_invalid", "ts_preview_title", "ts_last_rows"]:
+    for k in ["ts_preview_df", "ts_preview_invalid", "ts_preview_title", "ts_last_rows", "ts_row_swap_flags"]:
         st.session_state.pop(k, None)
 
     if clear_csv:
@@ -681,6 +703,7 @@ def _set_preview_from_text(url: str, ts_text: str) -> None:
         url, ts_text, TZ_NAME, api_key, manual_date, flip
     )
     st.session_state["ts_preview_df"] = preview
+    st.session_state["ts_row_swap_flags"] = [False] * len(preview)
     st.session_state["ts_preview_invalid"] = invalid
     st.session_state["ts_preview_title"] = video_title
     st.session_state["ts_auto_msg"] = f"プレビュー生成：解析 {len(preview)} 件 / 未解析 {len(invalid)} 件"
@@ -1661,6 +1684,7 @@ with tab1:
                         url, timestamps_text, TZ_NAME, api_key_ts, manual_date_ts, flip
                     )
                     st.session_state["ts_preview_df"] = preview
+                    st.session_state["ts_row_swap_flags"] = [False] * len(preview)
                     st.session_state["ts_preview_invalid"] = invalid
                     st.session_state["ts_preview_title"] = video_title
                     st.session_state["ts_last_rows"] = rows
@@ -1678,6 +1702,7 @@ with tab1:
                     flip=st.session_state.get("flip_ts", False),
                 )
                 st.session_state["ts_preview_df"] = preview_rows
+                st.session_state["ts_row_swap_flags"] = [False] * len(preview_rows)
                 st.session_state["ts_preview_invalid"] = invalid_lines
                 st.session_state["ts_preview_title"] = f"複数動画プレビュー（{len(preview_rows)}行）"
                 st.success(f"解析成功：{len(preview_rows)}件（未解析 {len(invalid_lines)}件）")
@@ -1702,6 +1727,8 @@ with tab1:
                     rows, _, invalid, video_title = generate_rows(
                         url, timestamps_text, TZ_NAME, api_key_ts, manual_date_ts, flip
                     )
+                    swap_flags = st.session_state.get("ts_row_swap_flags", []) or []
+                    rows = apply_row_swap_flags_to_csv_rows(rows, swap_flags)
                     csv_content = to_csv(rows)
                     download_name = re.sub(r'[\\/:*?"<>|\x00-\x1F]', "_", video_title or "").strip().strip(".") or "youtube_song_list"
                     if len(download_name) > 100:
@@ -1725,6 +1752,8 @@ with tab1:
                     manual_yyyymmdd=manual_date_ts,
                     flip=st.session_state.get("flip_ts", False),
                 )
+                swap_flags = st.session_state.get("ts_row_swap_flags", []) or []
+                rows = apply_row_swap_flags_to_csv_rows(rows, swap_flags)
                 csv_content = to_csv(rows)
                 st.session_state["ts_csv_bytes"] = csv_content.encode("utf-8-sig")
                 st.session_state["ts_csv_name"] = "timestamp_multi_videos.csv"
@@ -1744,25 +1773,41 @@ with tab1:
 
     if "ts_preview_df" in st.session_state:
         st.subheader("プレビュー")
-        df = pd.DataFrame(st.session_state["ts_preview_df"])
-        col_cfg = {
-            "time_seconds": st.column_config.NumberColumn("秒数", width="small"),
-            "artist": st.column_config.TextColumn("アーティスト名", width="medium"),
-            "song": st.column_config.TextColumn("楽曲名", width="large"),
-            "display_name": st.column_config.TextColumn("リンク表示名", width="large"),
-            "date_source": st.column_config.TextColumn("日付ソース", width="small"),
-            "hyperlink_formula": st.column_config.TextColumn("Excel用リンク式", width="large"),
-        }
-        if "video_id" in df.columns:
-            col_cfg["video_id"] = st.column_config.TextColumn("video_id", width="small")
-        if "video_url" in df.columns:
-            col_cfg["video_url"] = st.column_config.LinkColumn("video_url", width="large")
+        preview_rows = st.session_state.get("ts_preview_df", []) or []
+        swap_flags = st.session_state.get("ts_row_swap_flags", []) or []
+        if len(swap_flags) != len(preview_rows):
+            swap_flags = [False] * len(preview_rows)
 
-        st.dataframe(
-            df,
+        preview_with_ui = apply_row_swap_flags(preview_rows, swap_flags)
+        ui_rows = []
+        for idx, row in enumerate(preview_with_ui):
+            copied = dict(row)
+            copied["row_swap"] = "入れ替え" if idx < len(swap_flags) and swap_flags[idx] else "通常"
+            ui_rows.append(copied)
+
+        edited_df = st.data_editor(
+            pd.DataFrame(ui_rows),
             use_container_width=True,
-            column_config=col_cfg,
+            hide_index=True,
+            column_config={
+                "row_swap": st.column_config.SelectboxColumn("行ごと入れ替え", options=["通常", "入れ替え"], width="small"),
+                "time_seconds": st.column_config.NumberColumn("秒数", width="small"),
+                "artist": st.column_config.TextColumn("アーティスト名", width="medium"),
+                "song": st.column_config.TextColumn("楽曲名", width="large"),
+                "display_name": st.column_config.TextColumn("リンク表示名", width="large"),
+                "date_source": st.column_config.TextColumn("日付ソース", width="small"),
+                "hyperlink_formula": st.column_config.TextColumn("Excel用リンク式", width="large"),
+                "video_id": st.column_config.TextColumn("video_id", width="small"),
+                "video_url": st.column_config.LinkColumn("video_url", width="large"),
+            },
+            disabled=[c for c in pd.DataFrame(ui_rows).columns if c != "row_swap"],
+            key="ts_preview_editor",
         )
+
+        new_flags = [(str(v) == "入れ替え") for v in edited_df.get("row_swap", [])]
+        if new_flags != swap_flags:
+            st.session_state["ts_row_swap_flags"] = new_flags
+            st.rerun()
 
         st.caption(f"動画タイトル：{st.session_state.get('ts_preview_title', '')}")
 
