@@ -269,6 +269,21 @@ def iso_utc_to_tz_yyyymmdd(iso_str: str, tz_name: str) -> Optional[str]:
     return ymd
 
 
+def resolve_display_date(video_id: str, manual_yyyymmdd: str, api_key: str, tz_name: str) -> Tuple[Optional[str], Optional[str]]:
+    if manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
+        return manual_yyyymmdd, "manual"
+
+    if api_key:
+        date_info = fetch_best_display_date_and_sources(video_id, api_key, tz_name)
+        return date_info.get("chosen_yyyymmdd"), date_info.get("source")
+
+    return None, None
+
+
+def build_display_name(video_title: str, date_yyyymmdd: Optional[str]) -> str:
+    return f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{video_title}" if date_yyyymmdd else video_title
+
+
 # ==============================
 # タブ1：タイムスタンプCSVジェネレーター用関数
 # ==============================
@@ -487,18 +502,8 @@ def generate_rows(
 
     video_title = fetch_video_title_from_oembed(base_watch)
 
-    date_yyyymmdd: Optional[str] = None
-    date_source: Optional[str] = None
-
-    if manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
-        date_yyyymmdd = manual_yyyymmdd
-        date_source = "manual"
-    elif api_key:
-        date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
-        date_yyyymmdd = date_info.get("chosen_yyyymmdd")
-        date_source = date_info.get("source")
-
-    display_name = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{video_title}" if date_yyyymmdd else video_title
+    date_yyyymmdd, date_source = resolve_display_date(vid, manual_yyyymmdd, api_key, tz_name)
+    display_name = build_display_name(video_title, date_yyyymmdd)
 
     rows: List[List[str]] = [["アーティスト名", "楽曲名", "", "YouTubeリンク"]]
     parsed_preview: List[dict] = []
@@ -584,15 +589,10 @@ def build_multi_video_rows(
 
         if not ts_text:
             title = (it.get("title") or "").strip() or fetch_video_title_from_oembed(video_url)
-            date_yyyymmdd = None
-            if manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
-                date_yyyymmdd = manual_yyyymmdd
-            elif api_key:
-                date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
-                date_yyyymmdd = date_info.get("chosen_yyyymmdd")
+            date_yyyymmdd, _ = resolve_display_date(vid, manual_yyyymmdd, api_key, tz_name)
 
             link = f"https://www.youtube.com/watch?v={vid}"
-            label = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{title}" if date_yyyymmdd else title
+            label = build_display_name(title, date_yyyymmdd)
             hyperlink = make_excel_hyperlink(link, label)
             artist, song = split_artist_song_from_title(title)
             content_label = classify_content_label(
@@ -644,16 +644,8 @@ def build_multi_video_preview(
 
         if not ts_text:
             title = (it.get("title") or "").strip() or fetch_video_title_from_oembed(video_url)
-            date_yyyymmdd = None
-            date_source = ""
-            if manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
-                date_yyyymmdd = manual_yyyymmdd
-                date_source = "manual"
-            elif api_key:
-                date_info = fetch_best_display_date_and_sources(vid, api_key, tz_name)
-                date_yyyymmdd = date_info.get("chosen_yyyymmdd")
-                date_source = date_info.get("source") or ""
-            display_name = f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{title}" if date_yyyymmdd else title
+            date_yyyymmdd, date_source = resolve_display_date(vid, manual_yyyymmdd, api_key, tz_name)
+            display_name = build_display_name(title, date_yyyymmdd)
             artist, song = split_artist_song_from_title(title)
             preview_rows.append({
                 "video_id": vid,
@@ -662,7 +654,7 @@ def build_multi_video_preview(
                 "artist": artist,
                 "song": song,
                 "display_name": display_name,
-                "date_source": date_source,
+                "date_source": date_source or "",
             })
             warnings.append(f"{vid}: タイムスタンプ未入力のため、動画タイトルから1行プレビュー生成")
             continue
@@ -942,7 +934,7 @@ def cb_fetch_latest_multi_video_candidates() -> None:
     for vid in video_ids:
         meta = details.get(vid, {})
         title = meta.get("title") or f"動画 {vid}"
-        ymd = meta.get("date") or ""
+        ymd = meta.get("yyyymmdd") or ""
         candidates.append(
             {
                 "videoId": vid,
