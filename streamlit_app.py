@@ -34,6 +34,7 @@ COMMENT_ORDER_LABELS: Dict[str, str] = {
 # 共通ユーティリティ
 # ==============================
 def resolve_api_key() -> str:
+    """resolve_api_key の責務を実行する。"""
     shared_key = st.session_state.get("shared_api_key", "") or ""
     if not shared_key and GLOBAL_API_KEY:
         st.session_state["shared_api_key"] = GLOBAL_API_KEY
@@ -42,9 +43,7 @@ def resolve_api_key() -> str:
 
 
 def yt_get_json(path: str, params: Dict, timeout: int = 10) -> Optional[dict]:
-    """
-    YouTube Data API v3 GET（失敗時 None）
-    """
+    """yt_get_json の責務を実行する。"""
     try:
         r = requests.get(f"{YT_API_BASE}/{path.lstrip('/')}", params=params, timeout=timeout)
         if r.status_code != 200:
@@ -55,9 +54,7 @@ def yt_get_json(path: str, params: Dict, timeout: int = 10) -> Optional[dict]:
 
 
 def yt_get_json_verbose(path: str, params: Dict, timeout: int = 10) -> Tuple[Optional[dict], Optional[str]]:
-    """
-    YouTube Data API v3 GET（失敗時 (None, error_message)）
-    """
+    """yt_get_json_verbose の責務を実行する。"""
     try:
         r = requests.get(f"{YT_API_BASE}/{path.lstrip('/')}", params=params, timeout=timeout)
         if r.status_code != 200:
@@ -78,6 +75,7 @@ def yt_get_json_verbose(path: str, params: Dict, timeout: int = 10) -> Tuple[Opt
 
 
 def explain_youtube_api_error(status_code: int, message: str, reason: str = "") -> str:
+    """explain_youtube_api_error の責務を実行する。"""
     msg = (message or "").strip()
     rsn = (reason or "").strip()
     quota_reasons = {
@@ -104,6 +102,7 @@ def explain_youtube_api_error(status_code: int, message: str, reason: str = "") 
 
 
 def explain_youtube_api_exception(exc: Exception) -> str:
+    """explain_youtube_api_exception の責務を実行する。"""
     text = str(exc).strip() or exc.__class__.__name__
     lowered = text.lower()
     if any(k in lowered for k in ["name or service not known", "temporary failure in name resolution", "nodename nor servname", "connection", "timeout", "timed out", "ssl"]):
@@ -112,26 +111,27 @@ def explain_youtube_api_exception(exc: Exception) -> str:
 
 
 def to_csv(rows: List[List[str]]) -> str:
-    """2次元配列を CSV 文字列へ変換する。"""
+    """to_csv の責務を実行する。"""
     buf = io.StringIO()
     csv.writer(buf, quoting=csv.QUOTE_ALL).writerows(rows)
     return buf.getvalue()
 
 
 def sanitize_download_filename(video_title: str, default_name: str = "youtube_song_list") -> str:
-    """動画タイトルからダウンロード用に安全なファイル名を作成する。"""
+    """sanitize_download_filename の責務を実行する。"""
     download_name = re.sub(r'[\\/:*?"<>|\x00-\x1F]', "_", video_title or "").strip().strip(".") or default_name
     return download_name[:100]
 
 
 def save_csv_to_session(rows: List[List[str]], file_name: str) -> None:
-    """CSV を UTF-8 BOM 付きで session_state に保存する。"""
+    """save_csv_to_session の責務を実行する。"""
     csv_content = to_csv(rows)
     st.session_state["ts_csv_bytes"] = csv_content.encode("utf-8-sig")
     st.session_state["ts_csv_name"] = file_name
 
 
 def make_excel_hyperlink(url_: str, label: str) -> str:
+    """make_excel_hyperlink の責務を実行する。"""
     safe = (label or "").replace('"', '""')
     return f'=HYPERLINK("{url_}","{safe}")'
 
@@ -142,6 +142,7 @@ def classify_content_label(
     video_title: str = "",
     duration_seconds: Optional[int] = None,
 ) -> str:
+    """classify_content_label の責務を実行する。"""
     if has_timestamps:
         return "歌枠"
 
@@ -161,16 +162,19 @@ def classify_content_label(
 
 
 def is_valid_youtube_url(u: str) -> bool:
+    """is_valid_youtube_url の責務を実行する。"""
     return bool(re.match(r"^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.?be)\/.+$", u or ""))
 
 
 def normalize_text(s: str) -> str:
+    """normalize_text の責務を実行する。"""
     s = (s or "").replace("／", "/")
     s = s.replace("　", " ").strip()
     return re.sub(r"\s+", " ", s)
 
 
 def extract_video_id(u: str) -> Optional[str]:
+    """extract_video_id の責務を実行する。"""
     if not u:
         return None
     try:
@@ -193,6 +197,7 @@ def extract_video_id(u: str) -> Optional[str]:
 
 
 def extract_playlist_id(u: str) -> Optional[str]:
+    """extract_playlist_id の責務を実行する。"""
     if not u:
         return None
     try:
@@ -205,6 +210,7 @@ def extract_playlist_id(u: str) -> Optional[str]:
 
 
 def normalize_manual_date_input(raw: str, tz_name: str) -> Optional[str]:
+    """normalize_manual_date_input の責務を実行する。"""
     s = (raw or "").strip()
     if not s:
         return None
@@ -247,6 +253,7 @@ def normalize_manual_date_input(raw: str, tz_name: str) -> Optional[str]:
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_video_title_from_oembed(watch_url: str) -> str:
+    """fetch_video_title_from_oembed の責務を実行する。"""
     try:
         r = requests.get(
             "https://www.youtube.com/oembed",
@@ -262,9 +269,7 @@ def fetch_video_title_from_oembed(watch_url: str) -> str:
 
 
 def iso_utc_to_tz_epoch_and_yyyymmdd(iso_str: str, tz_name: str) -> Tuple[Optional[int], Optional[str]]:
-    """
-    ISO8601(UTC) -> (epoch_seconds, yyyymmdd in tz)
-    """
+    """iso_utc_to_tz_epoch_and_yyyymmdd の責務を実行する。"""
     if not iso_str:
         return None, None
     try:
@@ -279,11 +284,13 @@ def iso_utc_to_tz_epoch_and_yyyymmdd(iso_str: str, tz_name: str) -> Tuple[Option
 
 
 def iso_utc_to_tz_yyyymmdd(iso_str: str, tz_name: str) -> Optional[str]:
+    """iso_utc_to_tz_yyyymmdd の責務を実行する。"""
     _, ymd = iso_utc_to_tz_epoch_and_yyyymmdd(iso_str, tz_name)
     return ymd
 
 
 def resolve_display_date(video_id: str, manual_yyyymmdd: str, api_key: str, tz_name: str) -> Tuple[Optional[str], Optional[str]]:
+    """resolve_display_date の責務を実行する。"""
     if manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
         return manual_yyyymmdd, "manual"
 
@@ -295,6 +302,7 @@ def resolve_display_date(video_id: str, manual_yyyymmdd: str, api_key: str, tz_n
 
 
 def build_display_name(video_title: str, date_yyyymmdd: Optional[str]) -> str:
+    """build_display_name の責務を実行する。"""
     return f"{date_yyyymmdd}{DATE_TITLE_SEPARATOR}{video_title}" if date_yyyymmdd else video_title
 
 
@@ -305,10 +313,12 @@ TIMESTAMP_START_RE = re.compile(r"^\s*(?:[-*•▶▷\u25CF\u25A0\u25B6\u25B7\u3
 
 
 def _strip_leading_glyphs(line: str) -> str:
+    """_strip_leading_glyphs の責務を実行する。"""
     return re.sub(r"^\s*(?:[-*•▶▷\u25CF\u25A0\u25B6\u25B7\u30FB]\s*)+", "", line or "")
 
 
 def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Optional[str]]:
+    """parse_line の責務を実行する。"""
     m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", _strip_leading_glyphs(line))
     if not m:
         return (None, None, None)
@@ -335,6 +345,7 @@ def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Opt
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_best_display_date_and_sources(video_id: str, api_key: str, tz_name: str) -> Dict[str, Optional[str]]:
+    """fetch_best_display_date_and_sources の責務を実行する。"""
     result: Dict[str, Optional[str]] = {"chosen_yyyymmdd": None, "source": None}
     if not api_key:
         return result
@@ -377,6 +388,7 @@ def fetch_best_display_date_and_sources(video_id: str, api_key: str, tz_name: st
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_video_channel_id(video_id: str, api_key: str) -> Optional[str]:
+    """fetch_video_channel_id の責務を実行する。"""
     if not api_key or not video_id:
         return None
     data = yt_get_json(
@@ -391,6 +403,7 @@ def fetch_video_channel_id(video_id: str, api_key: str) -> Optional[str]:
 
 
 def _count_timestamp_lines(text: str) -> int:
+    """_count_timestamp_lines の責務を実行する。"""
     n = 0
     for raw in (text or "").splitlines():
         s = normalize_text(raw)
@@ -402,6 +415,7 @@ def _count_timestamp_lines(text: str) -> int:
 
 
 def _extract_timestamp_lines(text: str, flip: bool) -> str:
+    """_extract_timestamp_lines の責務を実行する。"""
     out = []
     for raw in (text or "").splitlines():
         s = normalize_text(raw)
@@ -421,10 +435,7 @@ def fetch_timestamp_comment_candidates(
     search_terms: str = "",
     max_pages: int = 3,
 ) -> Tuple[List[dict], Optional[str]]:
-    """
-    コメントからタイムスタンプ候補を収集してスコア順で返す。
-    返り値: (candidates, error_message)
-    """
+    """fetch_timestamp_comment_candidates の責務を実行する。"""
     if not api_key:
         return [], "APIキーが必要です。"
     if not video_id:
@@ -509,6 +520,7 @@ def generate_rows(
     manual_yyyymmdd: str,
     flip: bool
 ) -> Tuple[List[List[str]], List[dict], List[str], str]:
+    """generate_rows の責務を実行する。"""
     vid = extract_video_id(u)
     if not vid:
         raise ValueError("URLからビデオIDを抽出できませんでした。")
@@ -556,6 +568,7 @@ def generate_rows(
 
 
 def parse_unique_video_urls(raw_text: str) -> List[str]:
+    """parse_unique_video_urls の責務を実行する。"""
     urls: List[str] = []
     seen = set()
     for raw in (raw_text or "").splitlines():
@@ -581,6 +594,7 @@ def build_multi_video_rows(
     manual_yyyymmdd: str,
     flip: bool,
 ) -> Tuple[List[List[str]], List[str]]:
+    """build_multi_video_rows の責務を実行する。"""
     rows: List[List[str]] = [["アーティスト名", "楽曲名", "", "YouTubeリンク"]]
     warnings: List[str] = []
     duration_by_video_id: Dict[str, int] = {}
@@ -644,6 +658,7 @@ def build_multi_video_preview(
     manual_yyyymmdd: str,
     flip: bool,
 ) -> Tuple[List[dict], List[str], List[str]]:
+    """build_multi_video_preview の責務を実行する。"""
     preview_rows: List[dict] = []
     invalid_lines: List[str] = []
     warnings: List[str] = []
@@ -700,6 +715,7 @@ def build_multi_video_preview(
 
 
 def apply_row_swap_flags(preview_rows: List[dict], swap_flags: List[bool]) -> List[dict]:
+    """apply_row_swap_flags の責務を実行する。"""
     adjusted_rows: List[dict] = []
     for i, row in enumerate(preview_rows):
         copied = dict(row)
@@ -710,6 +726,7 @@ def apply_row_swap_flags(preview_rows: List[dict], swap_flags: List[bool]) -> Li
 
 
 def apply_row_swap_flags_to_csv_rows(rows: List[List[str]], swap_flags: List[bool]) -> List[List[str]]:
+    """apply_row_swap_flags_to_csv_rows の責務を実行する。"""
     if not rows:
         return rows
     adjusted_rows: List[List[str]] = [rows[0]]
@@ -725,10 +742,12 @@ def apply_row_swap_flags_to_csv_rows(rows: List[List[str]], swap_flags: List[boo
 # tab1: コールバック（重要：widget key を安全に更新する）
 # ==============================
 def _get_ts_api_key() -> str:
+    """_get_ts_api_key の責務を実行する。"""
     return resolve_api_key()
 
 
 def _get_manual_yyyymmdd() -> str:
+    """_get_manual_yyyymmdd の責務を実行する。"""
     raw = (st.session_state.get("ts_manual_date_raw", "") or "").strip()
     if not raw:
         return ""
@@ -737,6 +756,7 @@ def _get_manual_yyyymmdd() -> str:
 
 
 def _clear_ts_preview_state(clear_csv: bool = False) -> None:
+    """_clear_ts_preview_state の責務を実行する。"""
     for k in ["ts_preview_df", "ts_preview_invalid", "ts_preview_title", "ts_last_rows", "ts_row_swap_flags"]:
         st.session_state.pop(k, None)
 
@@ -746,6 +766,7 @@ def _clear_ts_preview_state(clear_csv: bool = False) -> None:
 
 
 def _set_preview_from_text(url: str, ts_text: str) -> None:
+    """_set_preview_from_text の責務を実行する。"""
     flip = st.session_state.get("flip_ts", False)
     api_key = _get_ts_api_key()
     manual_date = _get_manual_yyyymmdd()
@@ -764,6 +785,7 @@ def _set_preview_from_text(url: str, ts_text: str) -> None:
 
 
 def _apply_comment_text(comment_text: str, do_preview: bool) -> None:
+    """_apply_comment_text の責務を実行する。"""
     flip = st.session_state.get("flip_ts", False)
     ts_text = comment_text or ""
 
@@ -785,6 +807,7 @@ def _apply_comment_text(comment_text: str, do_preview: bool) -> None:
 
 
 def cb_fetch_candidates(do_autoselect_preview: bool) -> None:
+    """cb_fetch_candidates の責務を実行する。"""
     url = (st.session_state.get("ts_url", "") or "").strip()
     if not url or not is_valid_youtube_url(url):
         st.session_state["ts_auto_err"] = "URLが空、または無効です。"
@@ -825,6 +848,7 @@ def cb_fetch_candidates(do_autoselect_preview: bool) -> None:
 
 
 def cb_apply_candidate(index: int, do_preview: bool) -> None:
+    """cb_apply_candidate の責務を実行する。"""
     cands = st.session_state.get("ts_auto_candidates", []) or []
     if not cands or index < 0 or index >= len(cands):
         st.session_state["ts_auto_err"] = "候補がありません（先に「コメント候補を取得」してください）。"
@@ -833,6 +857,7 @@ def cb_apply_candidate(index: int, do_preview: bool) -> None:
 
 
 def cb_fetch_multi_video_candidates() -> None:
+    """cb_fetch_multi_video_candidates の責務を実行する。"""
     raw = st.session_state.get("ts_multi_urls", "") or ""
     urls = parse_unique_video_urls(raw)
     st.session_state["ts_multi_url_list"] = urls
@@ -899,6 +924,7 @@ def cb_fetch_multi_video_candidates() -> None:
 
 
 def cb_fetch_latest_multi_video_candidates() -> None:
+    """cb_fetch_latest_multi_video_candidates の責務を実行する。"""
     api_key = _get_ts_api_key()
     if not api_key:
         st.session_state["ts_multi_latest_err"] = "最新動画取得にはAPIキーが必要です。"
@@ -966,10 +992,12 @@ def cb_fetch_latest_multi_video_candidates() -> None:
 
 
 def cb_on_target_mode_change() -> None:
+    """cb_on_target_mode_change の責務を実行する。"""
     st.session_state.pop("ts_multi_latest_err", None)
 
 
 def cb_apply_latest_selection() -> None:
+    """cb_apply_latest_selection の責務を実行する。"""
     target_mode = st.session_state.get("ts_target_mode")
     candidates = st.session_state.get("ts_multi_latest_candidates", []) or []
     id_to_url = {c.get("videoId"): c.get("url", "") for c in candidates}
@@ -1014,6 +1042,7 @@ def cb_apply_latest_selection() -> None:
 
 
 def cb_fetch_comment_candidates_by_mode() -> None:
+    """cb_fetch_comment_candidates_by_mode の責務を実行する。"""
     if st.session_state.get("ts_target_mode") == "単体":
         cb_fetch_candidates(do_autoselect_preview=False)
     else:
@@ -1025,6 +1054,7 @@ def cb_fetch_comment_candidates_by_mode() -> None:
 # ==============================
 @st.cache_data(show_spinner=False, ttl=600)
 def resolve_channel_id_from_input(channel_input: str, api_key: str) -> Optional[str]:
+    """resolve_channel_id_from_input の責務を実行する。"""
     text = (channel_input or "").strip()
     if not text:
         return None
@@ -1101,6 +1131,7 @@ def resolve_channel_id_from_input(channel_input: str, api_key: str) -> Optional[
 
 
 def iso8601_to_seconds(iso: str) -> int:
+    """iso8601_to_seconds の責務を実行する。"""
     m = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso or "")
     h = int(m.group(1) or 0) if m else 0
     m_ = int(m.group(2) or 0) if m else 0
@@ -1109,6 +1140,7 @@ def iso8601_to_seconds(iso: str) -> int:
 
 
 def fetch_video_meta(video_ids: List[str], api_key: str):
+    """fetch_video_meta の責務を実行する。"""
     out = []
     for i in range(0, len(video_ids), 50):
         chunk = ",".join(video_ids[i:i+50])
@@ -1131,6 +1163,7 @@ def fetch_video_meta(video_ids: List[str], api_key: str):
 
 
 def clean_for_parse(s: str) -> str:
+    """clean_for_parse の責務を実行する。"""
     s = (s or "").replace("／", "/")
     s = re.sub(r"https?://\S+", " ", s)
     s = re.sub(r"#\S+", " ", s)
@@ -1140,6 +1173,7 @@ def clean_for_parse(s: str) -> str:
 
 
 def split_artist_song_from_title(title: str) -> Tuple[str, str]:
+    """split_artist_song_from_title の責務を実行する。"""
     t = clean_for_parse(title)
 
     q = re.search(r'[「『“"](.+?)[」』”"]', t)
@@ -1174,6 +1208,7 @@ def split_artist_song_from_title(title: str) -> Tuple[str, str]:
 
 @st.cache_data(show_spinner=False, ttl=600)
 def list_latest_video_ids_mixed_verbose(channel_id: str, api_key: str, limit: int) -> Tuple[List[str], Optional[str]]:
+    """list_latest_video_ids_mixed_verbose の責務を実行する。"""
     ids: List[str] = []
     token = None
     seen = set()
@@ -1213,6 +1248,7 @@ def list_latest_video_ids_mixed_verbose(channel_id: str, api_key: str, limit: in
 
 @st.cache_data(show_spinner=False, ttl=600)
 def fetch_titles_and_best_dates_bulk(video_ids: List[str], api_key: str, tz_name: str) -> Dict[str, Dict[str, str]]:
+    """fetch_titles_and_best_dates_bulk の責務を実行する。"""
     out: Dict[str, Dict[str, str]] = {}
 
     for i in range(0, len(video_ids), 50):
