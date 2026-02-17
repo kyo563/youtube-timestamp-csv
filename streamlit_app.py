@@ -1333,11 +1333,13 @@ with tab1:
             key="ts_url",
             placeholder="https://www.youtube.com/watch?v=...",
         )
+        url = (st.session_state.get("ts_url", "") or "").strip()
     else:
         multi_urls = st.session_state.get("ts_multi_urls", "") or ""
         st.text_area("選択中の動画URL（複数）", value=multi_urls, height=120, disabled=True)
         parsed_urls = parse_unique_video_urls(multi_urls)
         st.caption(f"有効URL: {len(parsed_urls)} 件（重複は自動除外）")
+        url = ""
 
     st.markdown("### 2. タイムスタンプを用意")
     st.caption("手動入力かコメント自動取得のどちらかを選び、最後に入力欄の内容を確認します。")
