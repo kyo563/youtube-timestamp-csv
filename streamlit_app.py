@@ -1154,6 +1154,33 @@ def cb_fetch_comment_candidates_by_mode() -> None:
         cb_fetch_multi_video_candidates()
 
 
+def sync_multi_video_items_from_urls(raw_text: str) -> None:
+    """sync_multi_video_items_from_urls の責務を実行する。"""
+    urls = parse_unique_video_urls(raw_text)
+    ordered_ids = [extract_video_id(u) for u in urls if extract_video_id(u)]
+
+    st.session_state["ts_multi_url_list"] = urls
+    st.session_state["ts_multi_order"] = ordered_ids
+
+    prev_items = st.session_state.get("ts_multi_items", {}) or {}
+    new_items: Dict[str, dict] = {}
+    for u in urls:
+        vid = extract_video_id(u)
+        if not vid:
+            continue
+
+        old = prev_items.get(vid, {}) or {}
+        new_items[vid] = {
+            "url": u,
+            "title": old.get("title", ""),
+            "candidates": old.get("candidates", []),
+            "applied_text": old.get("applied_text", ""),
+            "error": old.get("error", ""),
+        }
+
+    st.session_state["ts_multi_items"] = new_items
+
+
 # ==============================
 # タブ2：Shorts → CSV 用関数
 # ==============================
@@ -1535,8 +1562,13 @@ if target_mode == "単体":
     )
     url = (st.session_state.get("ts_url", "") or "").strip()
 else:
-    multi_urls = st.session_state.get("ts_multi_urls", "") or ""
-    st.text_area("選択中の動画URL（複数）", value=multi_urls, height=120, disabled=True)
+    multi_urls = st.text_area(
+        "動画URL（複数・1行1URL）",
+        key="ts_multi_urls",
+        placeholder="https://www.youtube.com/watch?v=...",
+        height=120,
+    )
+    sync_multi_video_items_from_urls(multi_urls)
     parsed_urls = parse_unique_video_urls(multi_urls)
     st.caption(f"有効URL: {len(parsed_urls)} 件（重複は自動除外）")
     url = ""
