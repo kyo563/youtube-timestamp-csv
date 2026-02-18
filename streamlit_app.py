@@ -1733,7 +1733,6 @@ if input_mode == "自動（コメントから取得）":
                         pairs = sorted(updated_lines.get(vid, []), key=lambda x: x[0])
                         merged_text = "\n".join([line for _, line in pairs if line.strip()]).strip()
                         items[vid]["applied_text"] = merged_text
-                        st.session_state[f"ts_multi_text_{vid}"] = merged_text
                     st.session_state["ts_multi_items"] = items
 
 if target_mode == "単体":
