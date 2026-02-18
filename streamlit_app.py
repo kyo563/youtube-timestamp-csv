@@ -427,6 +427,12 @@ def _extract_timestamp_lines(text: str, flip: bool) -> str:
     return "\n".join(out).strip()
 
 
+def _split_lines_for_bulk_editor(text: str) -> List[str]:
+    """_split_lines_for_bulk_editor の責務を実行する。"""
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    return lines if lines else [""]
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def fetch_timestamp_comment_candidates(
     video_id: str,
@@ -1624,13 +1630,16 @@ if input_mode == "自動（コメントから取得）":
             for vid in ordered_ids:
                 it = items.get(vid) or {}
                 applied_text = (it.get("applied_text") or "").strip()
-                summary_rows.append({
-                    "video_id": vid,
-                    "動画タイトル": (it.get("title") or "").strip() or f"動画 {vid}",
-                    "URL": it.get("url") or f"https://www.youtube.com/watch?v={vid}",
-                    "反映済みタイムスタンプ": applied_text,
-                    "反映行数": _count_timestamp_lines(applied_text),
-                })
+                lines = _split_lines_for_bulk_editor(applied_text)
+                for row_index, line in enumerate(lines, start=1):
+                    summary_rows.append({
+                        "video_id": vid,
+                        "動画タイトル": (it.get("title") or "").strip() or f"動画 {vid}",
+                        "URL": it.get("url") or f"https://www.youtube.com/watch?v={vid}",
+                        "行番号": row_index,
+                        "反映行テキスト": line,
+                        "反映行数": _count_timestamp_lines(applied_text),
+                    })
 
             if summary_rows:
                 st.markdown("##### 2-e. 反映結果の確認・一括編集")
@@ -1643,21 +1652,31 @@ if input_mode == "自動（コメントから取得）":
                         "video_id": st.column_config.TextColumn("video_id", width="small"),
                         "動画タイトル": st.column_config.TextColumn("動画タイトル", width="large"),
                         "URL": st.column_config.LinkColumn("URL", width="large"),
-                        "反映済みタイムスタンプ": st.column_config.TextColumn("反映済みタイムスタンプ", width="large"),
+                        "行番号": st.column_config.NumberColumn("行", width="small"),
+                        "反映行テキスト": st.column_config.TextColumn("反映行テキスト", width="large"),
                         "反映行数": st.column_config.NumberColumn("反映行数", width="small"),
                     },
-                    disabled=["video_id", "動画タイトル", "URL", "反映行数"],
+                    disabled=["video_id", "動画タイトル", "URL", "行番号", "反映行数"],
                     key="ts_multi_applied_editor",
                 )
 
-                if "video_id" in edited_summary and "反映済みタイムスタンプ" in edited_summary:
+                if "video_id" in edited_summary and "反映行テキスト" in edited_summary:
+                    updated_lines: Dict[str, List[Tuple[int, str]]] = {}
                     for _, row in edited_summary.iterrows():
                         vid = str(row.get("video_id") or "").strip()
                         if not vid or vid not in items:
                             continue
-                        edited_text = str(row.get("反映済みタイムスタンプ") or "")
-                        items[vid]["applied_text"] = edited_text
-                        st.session_state[f"ts_multi_text_{vid}"] = edited_text
+                        row_index = int(row.get("行番号") or 0)
+                        edited_line = str(row.get("反映行テキスト") or "")
+                        updated_lines.setdefault(vid, []).append((row_index, edited_line))
+
+                    for vid in ordered_ids:
+                        if vid not in items:
+                            continue
+                        pairs = sorted(updated_lines.get(vid, []), key=lambda x: x[0])
+                        merged_text = "\n".join([line for _, line in pairs if line.strip()]).strip()
+                        items[vid]["applied_text"] = merged_text
+                        st.session_state[f"ts_multi_text_{vid}"] = merged_text
                     st.session_state["ts_multi_items"] = items
 
 if target_mode == "単体":
