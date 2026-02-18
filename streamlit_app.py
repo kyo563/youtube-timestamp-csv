@@ -738,6 +738,31 @@ def apply_row_swap_flags_to_csv_rows(rows: List[List[str]], swap_flags: List[boo
     return adjusted_rows
 
 
+def extract_url_and_label_from_hyperlink_formula(formula: str) -> Tuple[str, str]:
+    """extract_url_and_label_from_hyperlink_formula の責務を実行する。"""
+    m = re.match(r'^=HYPERLINK\("([^"]+)"\s*,\s*"([^"]*)"\)$', (formula or "").strip(), flags=re.IGNORECASE)
+    if not m:
+        return "", ""
+    return m.group(1), m.group(2)
+
+
+def build_csv_result_preview_rows(rows: List[List[str]]) -> List[dict]:
+    """build_csv_result_preview_rows の責務を実行する。"""
+    out: List[dict] = []
+    for row in (rows or [])[1:]:
+        if len(row) < 4:
+            continue
+        url, label = extract_url_and_label_from_hyperlink_formula(row[3])
+        out.append({
+            "アーティスト名": row[0],
+            "楽曲名": row[1],
+            "区分": row[2],
+            "リンク表示名": label,
+            "YouTubeリンク": url,
+        })
+    return out
+
+
 # ==============================
 # tab1: コールバック（重要：widget key を安全に更新する）
 # ==============================
@@ -1574,6 +1599,44 @@ if input_mode == "自動（コメントから取得）":
                     items[vid] = it
             st.session_state["ts_multi_items"] = items
 
+            summary_rows = []
+            for vid in ordered_ids:
+                it = items.get(vid) or {}
+                applied_text = (it.get("applied_text") or "").strip()
+                summary_rows.append({
+                    "video_id": vid,
+                    "動画タイトル": (it.get("title") or "").strip() or f"動画 {vid}",
+                    "URL": it.get("url") or f"https://www.youtube.com/watch?v={vid}",
+                    "反映済みタイムスタンプ": applied_text,
+                    "反映行数": _count_timestamp_lines(applied_text),
+                })
+
+            if summary_rows:
+                st.markdown("##### 2-e. 反映結果の確認・一括編集")
+                st.caption("2-b/2-cで取り込んだ内容を一覧で確認し、そのまま編集できます。")
+                edited_summary = st.data_editor(
+                    pd.DataFrame(summary_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "video_id": st.column_config.TextColumn("video_id", width="small"),
+                        "動画タイトル": st.column_config.TextColumn("動画タイトル", width="large"),
+                        "URL": st.column_config.LinkColumn("URL", width="large"),
+                        "反映済みタイムスタンプ": st.column_config.TextColumn("反映済みタイムスタンプ", width="large"),
+                        "反映行数": st.column_config.NumberColumn("反映行数", width="small"),
+                    },
+                    disabled=["video_id", "動画タイトル", "URL", "反映行数"],
+                    key="ts_multi_applied_editor",
+                )
+
+                if "video_id" in edited_summary and "反映済みタイムスタンプ" in edited_summary:
+                    for _, row in edited_summary.iterrows():
+                        vid = str(row.get("video_id") or "").strip()
+                        if not vid or vid not in items:
+                            continue
+                        items[vid]["applied_text"] = str(row.get("反映済みタイムスタンプ") or "")
+                    st.session_state["ts_multi_items"] = items
+
 if target_mode == "単体":
     timestamps_input_ts = st.text_area(
         "2-d. タイムスタンプ付き楽曲リスト（最終確認・直接編集）",
@@ -1668,6 +1731,7 @@ if csv_clicked:
                 rows = apply_row_swap_flags_to_csv_rows(rows, swap_flags)
                 download_name = f"{sanitize_download_filename(video_title)}.csv"
                 save_csv_to_session(rows, download_name)
+                st.session_state["ts_last_rows"] = rows
                 st.success("CSVを生成しました。下のボタンからダウンロードできます。")
                 if invalid:
                     st.info(f"未解析行：{len(invalid)}件。")
@@ -1686,6 +1750,7 @@ if csv_clicked:
             swap_flags = st.session_state.get("ts_row_swap_flags", []) or []
             rows = apply_row_swap_flags_to_csv_rows(rows, swap_flags)
             save_csv_to_session(rows, "timestamp_multi_videos.csv")
+            st.session_state["ts_last_rows"] = rows
             st.success(f"CSVを生成しました。出力行数: {len(rows)-1}")
             for w in warnings:
                 st.caption(f"- {w}")
@@ -1699,6 +1764,12 @@ if st.session_state.get("ts_csv_bytes") and st.session_state.get("ts_csv_name"):
         file_name=st.session_state["ts_csv_name"],
         mime="text/csv",
     )
+
+    csv_preview_rows = build_csv_result_preview_rows(st.session_state.get("ts_last_rows", []) or [])
+    if csv_preview_rows:
+        st.markdown("#### 4-A. CSV出力内容の確認")
+        st.caption("ショート動画の行に加えて、歌枠のタイムスタンプ付きリンクもここで確認できます。")
+        st.dataframe(pd.DataFrame(csv_preview_rows), use_container_width=True, hide_index=True)
 
 if "ts_preview_df" in st.session_state:
     st.subheader("プレビュー")
