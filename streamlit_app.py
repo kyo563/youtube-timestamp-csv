@@ -977,6 +977,57 @@ def cb_apply_multi_candidate(video_id: str, index: int) -> None:
     st.session_state[f"ts_multi_text_{video_id}"] = picked_text
 
 
+def cb_refresh_multi_video_candidates() -> None:
+    """cb_refresh_multi_video_candidates の責務を実行する。"""
+    items = st.session_state.get("ts_multi_items", {}) or {}
+    ordered_ids = st.session_state.get("ts_multi_order", []) or []
+    if not items or not ordered_ids:
+        st.session_state["ts_multi_err"] = "更新対象の動画がありません。"
+        return
+
+    api_key = _get_ts_api_key()
+    if not api_key:
+        st.session_state["ts_multi_err"] = "コメント更新にはAPIキーが必要です。"
+        return
+
+    order = st.session_state.get("ts_auto_order", "relevance")
+    terms = st.session_state.get("ts_auto_search_terms", "")
+    pages = int(st.session_state.get("ts_auto_pages", 3))
+
+    refreshed_count = 0
+    fail_count = 0
+    for vid in ordered_ids:
+        it = items.get(vid)
+        if not it:
+            continue
+
+        url = (it.get("url") or f"https://www.youtube.com/watch?v={vid}").strip()
+        video_id = extract_video_id(url) or vid
+        cands, err = fetch_timestamp_comment_candidates(
+            video_id=video_id,
+            api_key=api_key,
+            order=order,
+            search_terms=terms,
+            max_pages=pages,
+        )
+
+        if err:
+            fail_count += 1
+            it["error"] = err
+            it["candidates"] = []
+        else:
+            refreshed_count += 1
+            it["error"] = ""
+            it["candidates"] = cands
+            it["title"] = fetch_video_title_from_oembed(url)
+
+        items[vid] = it
+
+    st.session_state["ts_multi_items"] = items
+    st.session_state["ts_multi_msg"] = f"コメント候補を再取得しました（成功 {refreshed_count} / 失敗 {fail_count}）"
+    st.session_state.pop("ts_multi_err", None)
+
+
 def cb_fetch_latest_multi_video_candidates() -> None:
     """cb_fetch_latest_multi_video_candidates の責務を実行する。"""
     api_key = _get_ts_api_key()
@@ -1644,6 +1695,12 @@ if input_mode == "自動（コメントから取得）":
             if summary_rows:
                 st.markdown("##### 2-e. 反映結果の確認・一括編集")
                 st.caption("2-b/2-cで取り込んだ内容を一覧で確認し、そのまま編集できます。")
+                st.button(
+                    "2-e. コメント候補を更新（再取得）",
+                    key="ts_multi_refresh_candidates",
+                    on_click=cb_refresh_multi_video_candidates,
+                    disabled=not is_api_key_ready,
+                )
                 edited_summary = st.data_editor(
                     pd.DataFrame(summary_rows),
                     use_container_width=True,
@@ -1826,7 +1883,14 @@ if "ts_preview_df" in st.session_state:
     for idx, row in enumerate(preview_with_ui):
         preview_table_rows.append({
             "入替": bool(idx < len(swap_flags) and swap_flags[idx]),
-            **row,
+            "artist": row.get("artist", ""),
+            "song": row.get("song", ""),
+            "video_id": row.get("video_id", ""),
+            "video_url": row.get("video_url", ""),
+            "time_seconds": row.get("time_seconds"),
+            "display_name": row.get("display_name", ""),
+            "date_source": row.get("date_source", ""),
+            "hyperlink_formula": row.get("hyperlink_formula", ""),
         })
 
     edited_preview_df = st.data_editor(
