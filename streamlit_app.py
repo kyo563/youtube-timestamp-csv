@@ -948,6 +948,29 @@ def cb_fetch_multi_video_candidates() -> None:
     st.session_state.pop("ts_multi_err", None)
 
 
+def cb_apply_multi_candidate(video_id: str, index: int) -> None:
+    """cb_apply_multi_candidate の責務を実行する。"""
+    items = st.session_state.get("ts_multi_items", {}) or {}
+    it = items.get(video_id)
+    if not it:
+        return
+
+    cands = it.get("candidates", []) or []
+    if index < 0 or index >= len(cands):
+        return
+
+    picked_text = cands[index].get("text", "")
+    if st.session_state.get("ts_auto_only_ts_lines", True):
+        extracted = _extract_timestamp_lines(picked_text, st.session_state.get("flip_ts", False))
+        if extracted:
+            picked_text = extracted
+
+    it["applied_text"] = picked_text
+    items[video_id] = it
+    st.session_state["ts_multi_items"] = items
+    st.session_state[f"ts_multi_text_{video_id}"] = picked_text
+
+
 def cb_fetch_latest_multi_video_candidates() -> None:
     """cb_fetch_latest_multi_video_candidates の責務を実行する。"""
     api_key = _get_ts_api_key()
@@ -1578,15 +1601,13 @@ if input_mode == "自動（コメントから取得）":
                             labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {head}")
                         picked = st.selectbox(f"候補（{vtitle}）", labels, key=f"ts_multi_pick_{vid}")
                         picked_idx = labels.index(picked)
-                        if st.button(f"この候補を採用（{vtitle}）", key=f"ts_multi_apply_{vid}", disabled=not is_api_key_ready):
-                            picked_text = cands[picked_idx].get("text", "")
-                            if st.session_state.get("ts_auto_only_ts_lines", True):
-                                extracted = _extract_timestamp_lines(picked_text, st.session_state.get("flip_ts", False))
-                                if extracted:
-                                    picked_text = extracted
-                            it["applied_text"] = picked_text
-                            items[vid] = it
-                            st.session_state["ts_multi_items"] = items
+                        st.button(
+                            f"この候補を採用（{vtitle}）",
+                            key=f"ts_multi_apply_{vid}",
+                            on_click=cb_apply_multi_candidate,
+                            kwargs={"video_id": vid, "index": picked_idx},
+                            disabled=not is_api_key_ready,
+                        )
 
                     edited = st.text_area(
                         f"採用テキスト（{vtitle}）",
@@ -1634,7 +1655,9 @@ if input_mode == "自動（コメントから取得）":
                         vid = str(row.get("video_id") or "").strip()
                         if not vid or vid not in items:
                             continue
-                        items[vid]["applied_text"] = str(row.get("反映済みタイムスタンプ") or "")
+                        edited_text = str(row.get("反映済みタイムスタンプ") or "")
+                        items[vid]["applied_text"] = edited_text
+                        st.session_state[f"ts_multi_text_{vid}"] = edited_text
                     st.session_state["ts_multi_items"] = items
 
 if target_mode == "単体":
