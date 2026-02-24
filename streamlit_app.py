@@ -1154,6 +1154,55 @@ def cb_fetch_comment_candidates_by_mode() -> None:
         cb_fetch_multi_video_candidates()
 
 
+def cb_reset_latest_selection() -> None:
+    """cb_reset_latest_selection の責務を実行する。"""
+    st.session_state["ts_multi_latest_selected_ids"] = []
+    st.session_state["ts_multi_latest_selected_labels"] = []
+    st.session_state["ts_single_latest_selected_id"] = ""
+    st.session_state["ts_single_latest_selected_label"] = ""
+    st.session_state["ts_multi_latest_msg"] = "動画選択をリセットしました。"
+    st.session_state.pop("ts_multi_latest_err", None)
+
+
+def cb_reset_timestamp_inputs() -> None:
+    """cb_reset_timestamp_inputs の責務を実行する。"""
+    target_mode = st.session_state.get("ts_target_mode")
+    if target_mode == "単体":
+        st.session_state["timestamps_input_ts"] = ""
+        st.session_state.pop("ts_auto_candidates", None)
+        st.session_state.pop("ts_auto_pick", None)
+        st.session_state["ts_auto_msg"] = "タイムスタンプ入力をリセットしました。"
+        st.session_state.pop("ts_auto_err", None)
+        return
+
+    items = st.session_state.get("ts_multi_items", {}) or {}
+    for vid, it in items.items():
+        it["applied_text"] = ""
+        items[vid] = it
+        st.session_state[f"ts_multi_text_{vid}"] = ""
+    st.session_state["ts_multi_items"] = items
+    st.session_state["ts_multi_msg"] = "全動画の採用テキストをリセットしました。"
+    st.session_state.pop("ts_multi_err", None)
+
+
+def cb_clear_preview() -> None:
+    """cb_clear_preview の責務を実行する。"""
+    _clear_ts_preview_state(clear_csv=False)
+
+
+def cb_clear_csv_output() -> None:
+    """cb_clear_csv_output の責務を実行する。"""
+    st.session_state.pop("ts_csv_bytes", None)
+    st.session_state.pop("ts_csv_name", None)
+    st.session_state.pop("ts_last_rows", None)
+
+
+def cb_back_to_correction_mode() -> None:
+    """cb_back_to_correction_mode の責務を実行する。"""
+    _clear_ts_preview_state(clear_csv=True)
+    st.session_state["ts_fix_msg"] = "入力内容を訂正して、プレビューからやり直してください。"
+
+
 def sync_multi_video_items_from_urls(raw_text: str) -> None:
     """sync_multi_video_items_from_urls の責務を実行する。"""
     urls = parse_unique_video_urls(raw_text)
@@ -1493,12 +1542,21 @@ if target_mode == "複数":
         value=False,
         key="ts_multi_shorts_only",
     )
-    st.button(
-        "1-A. 最新動画を取得",
-        key="ts_multi_fetch_latest",
-        on_click=cb_fetch_latest_multi_video_candidates,
-        disabled=not is_api_key_ready,
-    )
+    col_latest1, col_latest2 = st.columns([1, 1])
+    with col_latest1:
+        st.button(
+            "1-A. 最新動画を取得",
+            key="ts_multi_fetch_latest",
+            on_click=cb_fetch_latest_multi_video_candidates,
+            disabled=not is_api_key_ready,
+        )
+    with col_latest2:
+        st.button(
+            "1-A'. 最新動画を再取得",
+            key="ts_multi_fetch_latest_retry",
+            on_click=cb_fetch_latest_multi_video_candidates,
+            disabled=not is_api_key_ready,
+        )
 
 if st.session_state.get("ts_multi_latest_err"):
     st.error(st.session_state["ts_multi_latest_err"])
@@ -1546,12 +1604,28 @@ if target_mode == "複数" and latest_candidates:
         )
         st.session_state["ts_multi_latest_selected_ids"] = [label_to_id[l] for l in picked_labels if l in label_to_id]
 
-    st.button(
-        "1-C. 選択を反映",
-        key="ts_apply_latest_selection",
-        on_click=cb_apply_latest_selection,
-        disabled=not is_api_key_ready,
-    )
+    col_reflect1, col_reflect2, col_reflect3 = st.columns([1, 1, 1])
+    with col_reflect1:
+        st.button(
+            "1-C. 選択を反映",
+            key="ts_apply_latest_selection",
+            on_click=cb_apply_latest_selection,
+            disabled=not is_api_key_ready,
+        )
+    with col_reflect2:
+        st.button(
+            "1-C'. 選択をリセット",
+            key="ts_reset_latest_selection",
+            on_click=cb_reset_latest_selection,
+            disabled=not is_api_key_ready,
+        )
+    with col_reflect3:
+        st.button(
+            "1-C''. URL欄へ再反映",
+            key="ts_apply_latest_selection_retry",
+            on_click=cb_apply_latest_selection,
+            disabled=not is_api_key_ready,
+        )
 
 if target_mode == "単体":
     st.text_input(
@@ -1571,6 +1645,22 @@ else:
     sync_multi_video_items_from_urls(multi_urls)
     parsed_urls = parse_unique_video_urls(multi_urls)
     st.caption(f"有効URL: {len(parsed_urls)} 件（重複は自動除外）")
+    col_url1, col_url2 = st.columns([1, 1])
+    with col_url1:
+        st.button(
+            "1-D. URL一覧を再反映",
+            key="ts_multi_url_sync_retry",
+            on_click=sync_multi_video_items_from_urls,
+            kwargs={"raw_text": st.session_state.get("ts_multi_urls", "")},
+            disabled=not is_api_key_ready,
+        )
+    with col_url2:
+        st.button(
+            "1-D'. URL入力をクリア",
+            key="ts_multi_urls_clear",
+            on_click=lambda: st.session_state.update({"ts_multi_urls": "", "ts_multi_items": {}, "ts_multi_order": []}),
+            disabled=not is_api_key_ready,
+        )
     url = ""
 
 st.markdown("### 2. タイムスタンプを用意")
@@ -1632,7 +1722,11 @@ if input_mode == "自動（コメントから取得）":
         with col_a4:
             st.checkbox("タイムスタンプ行のみ抽出", value=True, key="ts_auto_only_ts_lines")
 
-        st.button("2-b. コメント候補を取得", key="ts_fetch_comments_common", on_click=cb_fetch_comment_candidates_by_mode, disabled=not is_api_key_ready)
+        col_b1, col_b2 = st.columns([1, 1])
+        with col_b1:
+            st.button("2-b. コメント候補を取得", key="ts_fetch_comments_common", on_click=cb_fetch_comment_candidates_by_mode, disabled=not is_api_key_ready)
+        with col_b2:
+            st.button("2-b'. コメント候補を再取得", key="ts_fetch_comments_common_retry", on_click=cb_fetch_comment_candidates_by_mode, disabled=not is_api_key_ready)
 
         if target_mode == "単体":
             if st.session_state.get("ts_auto_err"):
@@ -1658,6 +1752,13 @@ if input_mode == "自動（コメントから取得）":
                     key="ts_auto_apply",
                     on_click=cb_apply_candidate,
                     kwargs={"index": picked_idx, "do_preview": False},
+                    disabled=not is_api_key_ready,
+                )
+                st.button(
+                    "2-c'. 先頭候補を再反映",
+                    key="ts_auto_apply_first",
+                    on_click=cb_apply_candidate,
+                    kwargs={"index": 0, "do_preview": False},
                     disabled=not is_api_key_ready,
                 )
 
@@ -1727,12 +1828,21 @@ if input_mode == "自動（コメントから取得）":
             if summary_rows:
                 st.markdown("##### 2-e. 反映結果の確認・一括編集")
                 st.caption("2-b/2-cで取り込んだ内容を一覧で確認し、そのまま編集できます。")
-                st.button(
-                    "2-e. コメント候補を更新（再取得）",
-                    key="ts_multi_refresh_candidates",
-                    on_click=cb_refresh_multi_video_candidates,
-                    disabled=not is_api_key_ready,
-                )
+                col_e1, col_e2 = st.columns([1, 1])
+                with col_e1:
+                    st.button(
+                        "2-e. コメント候補を更新（再取得）",
+                        key="ts_multi_refresh_candidates",
+                        on_click=cb_refresh_multi_video_candidates,
+                        disabled=not is_api_key_ready,
+                    )
+                with col_e2:
+                    st.button(
+                        "2-e'. 採用テキストを全リセット",
+                        key="ts_multi_reset_inputs",
+                        on_click=cb_reset_timestamp_inputs,
+                        disabled=not is_api_key_ready,
+                    )
                 edited_summary = st.data_editor(
                     pd.DataFrame(summary_rows),
                     use_container_width=True,
@@ -1775,6 +1885,12 @@ if target_mode == "単体":
         key="timestamps_input_ts",
         disabled=not is_api_key_ready,
     )
+    st.button(
+        "2-d'. 入力内容をリセット",
+        key="ts_single_reset_inputs",
+        on_click=cb_reset_timestamp_inputs,
+        disabled=not is_api_key_ready,
+    )
 else:
     timestamps_input_ts = ""
 
@@ -1789,6 +1905,14 @@ if is_api_key_ready and manual_date_raw_ts:
 st.markdown("### 3. プレビュー確認")
 # ここでは「CSV出力前に解析結果を確認・微調整する」ためのプレビューを作る。
 st.caption("修正したい場合は『2. タイムスタンプを用意』に戻って編集し、再度プレビューを更新してください。")
+
+col_reset_preview1, col_reset_preview2 = st.columns([1, 1])
+with col_reset_preview1:
+    st.button("3-A. プレビューをクリア", key="ts_clear_preview", on_click=cb_clear_preview, disabled=not is_api_key_ready)
+with col_reset_preview2:
+    st.button("3-B. 訂正モードへ戻る", key="ts_back_to_fix", on_click=cb_back_to_correction_mode, disabled=not is_api_key_ready)
+if st.session_state.get("ts_fix_msg"):
+    st.info(st.session_state["ts_fix_msg"])
 
 col_p1, col_p2 = st.columns([1, 1])
 with col_p1:
@@ -1886,6 +2010,12 @@ if csv_clicked:
                 st.caption(f"- {w}")
         except Exception as e:
             st.error(f"エラー: {e}")
+
+col_csv_retry1, col_csv_retry2 = st.columns([1, 1])
+with col_csv_retry1:
+    st.button("4-A. CSV出力状態をクリア", key="ts_clear_csv", on_click=cb_clear_csv_output, disabled=not is_api_key_ready)
+with col_csv_retry2:
+    st.button("4-B. 入力修正に戻る", key="ts_back_to_fix_after_csv", on_click=cb_back_to_correction_mode, disabled=not is_api_key_ready)
 
 if st.session_state.get("ts_csv_bytes") and st.session_state.get("ts_csv_name"):
     st.download_button(
