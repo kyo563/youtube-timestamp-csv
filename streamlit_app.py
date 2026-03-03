@@ -575,12 +575,80 @@ def generate_rows(
 
 def parse_unique_video_urls(raw_text: str) -> List[str]:
     """parse_unique_video_urls の責務を実行する。"""
+    urls, _ = parse_unique_video_urls_with_playlist(raw_text, "")
+    return urls
+
+
+def list_playlist_video_urls_verbose(
+    playlist_id: str,
+    api_key: str,
+    max_items: int = 500,
+) -> Tuple[List[str], Optional[str]]:
+    """list_playlist_video_urls_verbose の責務を実行する。"""
+    if not playlist_id:
+        return [], "再生リストIDが空です。"
+    if not api_key:
+        return [], "再生リストURLの展開にはAPIキーが必要です。"
+
     urls: List[str] = []
     seen = set()
+    page_token = ""
+    remain = max(1, min(max_items, 1000))
+
+    while remain > 0:
+        params = {
+            "part": "contentDetails",
+            "playlistId": playlist_id,
+            "maxResults": min(50, remain),
+            "key": api_key,
+        }
+        if page_token:
+            params["pageToken"] = page_token
+
+        data, err = yt_get_json_verbose("playlistItems", params)
+        if err or not data:
+            return urls, err or "再生リスト動画一覧の取得に失敗しました。"
+
+        items = data.get("items") or []
+        for it in items:
+            vid = ((it.get("contentDetails") or {}).get("videoId") or "").strip()
+            if not vid:
+                continue
+            watch = f"https://www.youtube.com/watch?v={vid}"
+            if watch in seen:
+                continue
+            seen.add(watch)
+            urls.append(watch)
+
+        remain = max_items - len(urls)
+        page_token = (data.get("nextPageToken") or "").strip()
+        if not page_token:
+            break
+
+    return urls, None
+
+
+def parse_unique_video_urls_with_playlist(raw_text: str, api_key: str) -> Tuple[List[str], List[str]]:
+    """parse_unique_video_urls_with_playlist の責務を実行する。"""
+    urls: List[str] = []
+    seen = set()
+    warnings: List[str] = []
     for raw in (raw_text or "").splitlines():
         line = (raw or "").strip()
         if not line:
             continue
+
+        playlist_id = extract_playlist_id(line)
+        if playlist_id:
+            pl_urls, pl_err = list_playlist_video_urls_verbose(playlist_id, api_key)
+            if pl_err:
+                warnings.append(f"再生リスト展開失敗（{playlist_id}）: {pl_err}")
+            for watch in pl_urls:
+                if watch in seen:
+                    continue
+                seen.add(watch)
+                urls.append(watch)
+
         vid = extract_video_id(line)
         if not vid:
             continue
@@ -589,7 +657,7 @@ def parse_unique_video_urls(raw_text: str) -> List[str]:
             continue
         seen.add(watch)
         urls.append(watch)
-    return urls
+    return urls, warnings
 
 
 def build_multi_video_rows(
@@ -890,16 +958,17 @@ def cb_apply_candidate(index: int, do_preview: bool) -> None:
 def cb_fetch_multi_video_candidates() -> None:
     """cb_fetch_multi_video_candidates の責務を実行する。"""
     raw = st.session_state.get("ts_multi_urls", "") or ""
-    urls = parse_unique_video_urls(raw)
+    api_key = _get_ts_api_key()
+    urls, parse_warnings = parse_unique_video_urls_with_playlist(raw, api_key)
     st.session_state["ts_multi_url_list"] = urls
     st.session_state["ts_multi_order"] = [extract_video_id(u) for u in urls if extract_video_id(u)]
+    st.session_state["ts_multi_url_parse_warnings"] = parse_warnings
 
     if not urls:
         st.session_state["ts_multi_err"] = "有効なYouTube URLが見つかりませんでした。"
         st.session_state["ts_multi_items"] = {}
         return
 
-    api_key = _get_ts_api_key()
     if not api_key:
         st.session_state["ts_multi_err"] = "複数動画のコメント自動取得にはAPIキーが必要です。"
         st.session_state["ts_multi_items"] = {}
@@ -1205,11 +1274,12 @@ def cb_back_to_correction_mode() -> None:
 
 def sync_multi_video_items_from_urls(raw_text: str) -> None:
     """sync_multi_video_items_from_urls の責務を実行する。"""
-    urls = parse_unique_video_urls(raw_text)
+    urls, parse_warnings = parse_unique_video_urls_with_playlist(raw_text, _get_ts_api_key())
     ordered_ids = [extract_video_id(u) for u in urls if extract_video_id(u)]
 
     st.session_state["ts_multi_url_list"] = urls
     st.session_state["ts_multi_order"] = ordered_ids
+    st.session_state["ts_multi_url_parse_warnings"] = parse_warnings
 
     prev_items = st.session_state.get("ts_multi_items", {}) or {}
     new_items: Dict[str, dict] = {}
@@ -1643,8 +1713,10 @@ else:
         height=120,
     )
     sync_multi_video_items_from_urls(multi_urls)
-    parsed_urls = parse_unique_video_urls(multi_urls)
-    st.caption(f"有効URL: {len(parsed_urls)} 件（重複は自動除外）")
+    parsed_urls = st.session_state.get("ts_multi_url_list", []) or []
+    st.caption(f"有効URL: {len(parsed_urls)} 件（重複は自動除外、再生リストURL展開対応）")
+    for warn in (st.session_state.get("ts_multi_url_parse_warnings", []) or []):
+        st.warning(warn)
     col_url1, col_url2 = st.columns([1, 1])
     with col_url1:
         st.button(
