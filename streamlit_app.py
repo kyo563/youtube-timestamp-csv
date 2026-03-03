@@ -209,6 +209,19 @@ def extract_playlist_id(u: str) -> Optional[str]:
         return None
 
 
+def extract_unique_playlist_ids(text: str) -> List[str]:
+    """extract_unique_playlist_ids の責務を実行する。"""
+    ids: List[str] = []
+    seen = set()
+    for raw in (text or "").splitlines():
+        playlist_id = extract_playlist_id((raw or "").strip())
+        if not playlist_id or playlist_id in seen:
+            continue
+        seen.add(playlist_id)
+        ids.append(playlist_id)
+    return ids
+
+
 def normalize_manual_date_input(raw: str, tz_name: str) -> Optional[str]:
     """normalize_manual_date_input の責務を実行する。"""
     s = (raw or "").strip()
@@ -1111,6 +1124,55 @@ def cb_fetch_latest_multi_video_candidates() -> None:
         st.session_state["ts_multi_latest_candidates"] = []
         return
 
+    playlist_ids = extract_unique_playlist_ids(channel_input)
+    if playlist_ids:
+        latest_n = int(st.session_state.get("ts_multi_latest_n", 10))
+        max_items = max(1, min(latest_n, 50))
+
+        expanded_urls: List[str] = []
+        seen_urls = set()
+        playlist_errors: List[str] = []
+        for playlist_id in playlist_ids:
+            pl_urls, pl_err = list_playlist_video_urls_verbose(playlist_id, api_key, max_items=max_items)
+            if pl_err:
+                playlist_errors.append(f"{playlist_id}: {pl_err}")
+                continue
+            for u in pl_urls:
+                if u in seen_urls:
+                    continue
+                seen_urls.add(u)
+                expanded_urls.append(u)
+
+        if not expanded_urls:
+            detail = f"（{'; '.join(playlist_errors)}）" if playlist_errors else ""
+            st.session_state["ts_multi_latest_err"] = f"再生リスト動画を取得できませんでした。{detail}".strip()
+            st.session_state["ts_multi_latest_candidates"] = []
+            return
+
+        video_ids = [extract_video_id(u) for u in expanded_urls if extract_video_id(u)]
+        titles_dates = fetch_titles_and_best_dates_bulk(video_ids, api_key, TZ_NAME)
+
+        candidates = []
+        for vid in video_ids:
+            if not vid:
+                continue
+            td = titles_dates.get(vid, {})
+            candidates.append({
+                "videoId": vid,
+                "url": f"https://www.youtube.com/watch?v={vid}",
+                "title": td.get("title") or f"Video {vid}",
+                "yyyymmdd": td.get("yyyymmdd") or "",
+                "date_source": td.get("date_source") or "",
+                "sort_epoch": td.get("sort_epoch") or "0",
+            })
+
+        st.session_state["ts_multi_latest_candidates"] = candidates
+        st.session_state["ts_multi_latest_selected_ids"] = [c["videoId"] for c in candidates]
+        suffix = f" / 警告 {len(playlist_errors)}" if playlist_errors else ""
+        st.session_state["ts_multi_latest_msg"] = f"再生リスト展開で動画 {len(candidates)} 件を取得しました。{suffix}"
+        st.session_state.pop("ts_multi_latest_err", None)
+        return
+
     channel_id = resolve_channel_id_from_input(channel_input, api_key)
     if not channel_id:
         st.session_state["ts_multi_latest_err"] = "チャンネルIDを特定できませんでした。URLまたはIDを確認してください。"
@@ -1595,8 +1657,8 @@ target_mode = st.radio(
 )
 if target_mode == "複数":
     st.text_input(
-        "チャンネルURLまたはチャンネルID（UC... / @handle / URL）",
-        placeholder="https://www.youtube.com/@example または UCxxxxxxxxxxxxxxxxxxxxxx",
+        "チャンネルURL/ID または 再生リストURL（複数行可）",
+        placeholder="https://www.youtube.com/@example\nhttps://www.youtube.com/playlist?list=...",
         key="ts_multi_channel_input",
     )
     st.slider(
