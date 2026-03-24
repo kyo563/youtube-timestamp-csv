@@ -858,6 +858,24 @@ def _get_ts_api_key() -> str:
     return resolve_api_key()
 
 
+def _multi_text_key(video_id: str) -> str:
+    """複数動画の採用テキスト入力欄で使う Session State キーを返す。"""
+    return f"ts_multi_text_{video_id}"
+
+
+def _set_multi_text_state(video_id: str, text: str) -> None:
+    """複数動画の採用テキストを Session State に反映する。"""
+    st.session_state[_multi_text_key(video_id)] = text or ""
+
+
+def _ensure_multi_text_state(video_id: str, fallback_text: str = "") -> str:
+    """複数動画の採用テキスト状態を初期化し、キーを返す。"""
+    key = _multi_text_key(video_id)
+    if key not in st.session_state:
+        st.session_state[key] = fallback_text or ""
+    return key
+
+
 def _get_manual_yyyymmdd() -> str:
     """_get_manual_yyyymmdd の責務を実行する。"""
     raw = (st.session_state.get("ts_manual_date_raw", "") or "").strip()
@@ -1032,6 +1050,8 @@ def cb_fetch_multi_video_candidates() -> None:
         }
 
     st.session_state["ts_multi_items"] = items
+    for vid, it in items.items():
+        _set_multi_text_state(vid, it.get("applied_text", ""))
     st.session_state["ts_multi_msg"] = f"{len(items)}動画の候補取得完了（失敗 {fail_count}）"
     st.session_state.pop("ts_multi_err", None)
 
@@ -1056,7 +1076,7 @@ def cb_apply_multi_candidate(video_id: str, index: int) -> None:
     it["applied_text"] = picked_text
     items[video_id] = it
     st.session_state["ts_multi_items"] = items
-    st.session_state[f"ts_multi_text_{video_id}"] = picked_text
+    _set_multi_text_state(video_id, picked_text)
 
 
 def cb_refresh_multi_video_candidates() -> None:
@@ -1106,6 +1126,8 @@ def cb_refresh_multi_video_candidates() -> None:
         items[vid] = it
 
     st.session_state["ts_multi_items"] = items
+    for vid, it in items.items():
+        _set_multi_text_state(vid, it.get("applied_text", ""))
     st.session_state["ts_multi_msg"] = f"コメント候補を再取得しました（成功 {refreshed_count} / 失敗 {fail_count}）"
     st.session_state.pop("ts_multi_err", None)
 
@@ -1310,7 +1332,7 @@ def cb_reset_timestamp_inputs() -> None:
     for vid, it in items.items():
         it["applied_text"] = ""
         items[vid] = it
-        st.session_state[f"ts_multi_text_{vid}"] = ""
+        _set_multi_text_state(vid, "")
     st.session_state["ts_multi_items"] = items
     st.session_state["ts_multi_msg"] = "全動画の採用テキストをリセットしました。"
     st.session_state.pop("ts_multi_err", None)
@@ -1360,6 +1382,8 @@ def sync_multi_video_items_from_urls(raw_text: str) -> None:
         }
 
     st.session_state["ts_multi_items"] = new_items
+    for vid, it in new_items.items():
+        _ensure_multi_text_state(vid, it.get("applied_text", ""))
 
 
 # ==============================
@@ -1935,9 +1959,8 @@ if input_mode == "自動（コメントから取得）":
 
                     edited = st.text_area(
                         f"採用テキスト（{vtitle}）",
-                        value=it.get("applied_text", ""),
                         height=140,
-                        key=f"ts_multi_text_{vid}",
+                        key=_ensure_multi_text_state(vid, it.get("applied_text", "")),
                         disabled=not is_api_key_ready,
                     )
                     it["applied_text"] = edited
@@ -2009,6 +2032,7 @@ if input_mode == "自動（コメントから取得）":
                         pairs = sorted(updated_lines.get(vid, []), key=lambda x: x[0])
                         merged_text = "\n".join([line for _, line in pairs if line.strip()]).strip()
                         items[vid]["applied_text"] = merged_text
+                        _set_multi_text_state(vid, merged_text)
                     st.session_state["ts_multi_items"] = items
 
 if target_mode == "単体":
