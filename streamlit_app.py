@@ -334,16 +334,24 @@ def _strip_leading_glyphs(line: str) -> str:
 
 def parse_line(line: str, flip: bool) -> Tuple[Optional[int], Optional[str], Optional[str]]:
     """parse_line の責務を実行する。"""
-    m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", _strip_leading_glyphs(line))
-    if not m:
-        return (None, None, None)
-    time_str = m.group(0)
+    cleaned = _strip_leading_glyphs(line)
+    m = re.match(r"^(\d{1,2}:)?(\d{1,2}):(\d{2})", cleaned)
+    info = ""
+    if m:
+        time_str = m.group(0)
+        info = cleaned[len(time_str):].strip()
+    else:
+        mend = re.match(r"^(.*?)(\d{1,2}:)?(\d{1,2}):(\d{2})\s*$", cleaned)
+        if not mend:
+            return (None, None, None)
+        time_str = f"{(mend.group(2) or '')}{mend.group(3)}:{mend.group(4)}"
+        info = (mend.group(1) or "").strip()
+
     parts = list(map(int, time_str.split(":")))
     if len(parts) == 3:
         seconds = parts[0] * 3600 + parts[1] * 60 + parts[2]
     else:
         seconds = parts[0] * 60 + parts[1]
-    info = _strip_leading_glyphs(line)[len(time_str):].strip()
 
     msep = re.search(r"\s(-|—|–|―|－|/|／|by|BY)\s", info)
     if msep:
