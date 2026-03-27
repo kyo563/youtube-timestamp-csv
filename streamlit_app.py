@@ -470,6 +470,12 @@ def _split_lines_for_bulk_editor(text: str) -> List[str]:
     return lines if lines else [""]
 
 
+def _is_comments_disabled_error(err: str) -> bool:
+    """YouTubeコメント無効時のエラーかを判定する。"""
+    normalized = (err or "").lower()
+    return ("disabled comments" in normalized) or ("comments disabled" in normalized)
+
+
 @st.cache_data(show_spinner=False, ttl=300)
 def fetch_timestamp_comment_candidates(
     video_id: str,
@@ -506,6 +512,8 @@ def fetch_timestamp_comment_candidates(
 
         data, err = yt_get_json_verbose("commentThreads", params, timeout=10)
         if err:
+            if _is_comments_disabled_error(err):
+                return [], "コメントが無効な動画のため、候補取得をスキップしました。"
             return [], f"commentThreads.list 失敗: {err}"
         if not data:
             break
@@ -1118,6 +1126,7 @@ def cb_fetch_multi_video_candidates() -> None:
 
     items: Dict[str, dict] = {}
     fail_count = 0
+    skip_count = 0
     for u in urls:
         vid = extract_video_id(u)
         if not vid:
@@ -1132,7 +1141,10 @@ def cb_fetch_multi_video_candidates() -> None:
             max_pages=pages,
         )
         if err:
-            fail_count += 1
+            if (err or "").startswith("コメントが無効"):
+                skip_count += 1
+            else:
+                fail_count += 1
             items[vid] = {
                 "url": u,
                 "title": video_title,
@@ -1159,7 +1171,7 @@ def cb_fetch_multi_video_candidates() -> None:
     st.session_state["ts_multi_items"] = items
     for vid, it in items.items():
         _set_multi_text_state(vid, it.get("applied_text", ""))
-    st.session_state["ts_multi_msg"] = f"{len(items)}動画の候補取得完了（失敗 {fail_count}）"
+    st.session_state["ts_multi_msg"] = f"{len(items)}動画の候補取得完了（失敗 {fail_count} / コメント無効 {skip_count}）"
     st.session_state.pop("ts_multi_err", None)
 
 
@@ -1205,6 +1217,7 @@ def cb_refresh_multi_video_candidates() -> None:
 
     refreshed_count = 0
     fail_count = 0
+    skip_count = 0
     for vid in ordered_ids:
         it = items.get(vid)
         if not it:
@@ -1221,7 +1234,10 @@ def cb_refresh_multi_video_candidates() -> None:
         )
 
         if err:
-            fail_count += 1
+            if (err or "").startswith("コメントが無効"):
+                skip_count += 1
+            else:
+                fail_count += 1
             it["error"] = err
             it["candidates"] = []
         else:
@@ -1235,7 +1251,7 @@ def cb_refresh_multi_video_candidates() -> None:
     st.session_state["ts_multi_items"] = items
     for vid, it in items.items():
         _set_multi_text_state(vid, it.get("applied_text", ""))
-    st.session_state["ts_multi_msg"] = f"コメント候補を再取得しました（成功 {refreshed_count} / 失敗 {fail_count}）"
+    st.session_state["ts_multi_msg"] = f"コメント候補を再取得しました（成功 {refreshed_count} / 失敗 {fail_count} / コメント無効 {skip_count}）"
     st.session_state.pop("ts_multi_err", None)
 
 
@@ -2091,6 +2107,11 @@ if input_mode == "自動（コメントから取得）":
             items = st.session_state.get("ts_multi_items", {}) or {}
             ordered_ids = st.session_state.get("ts_multi_order", []) or []
             for vid in ordered_ids:
+                key = _multi_text_key(vid)
+                desired = ((items.get(vid) or {}).get("applied_text") or "")
+                if st.session_state.get(key) != desired:
+                    st.session_state[key] = desired
+            for vid in ordered_ids:
                 it = items.get(vid) or {}
                 vurl = it.get("url") or f"https://www.youtube.com/watch?v={vid}"
                 vtitle = (it.get("title") or "").strip() or f"動画 {vid}"
@@ -2186,14 +2207,18 @@ if input_mode == "自動（コメントから取得）":
                         edited_line = str(row.get("反映行テキスト") or "")
                         updated_lines.setdefault(vid, []).append((row_index, edited_line))
 
+                    changed = False
                     for vid in ordered_ids:
                         if vid not in items:
                             continue
                         pairs = sorted(updated_lines.get(vid, []), key=lambda x: x[0])
                         merged_text = "\n".join([line for _, line in pairs if line.strip()]).strip()
-                        items[vid]["applied_text"] = merged_text
-                        _set_multi_text_state(vid, merged_text)
-                    st.session_state["ts_multi_items"] = items
+                        if (items[vid].get("applied_text") or "") != merged_text:
+                            items[vid]["applied_text"] = merged_text
+                            changed = True
+                    if changed:
+                        st.session_state["ts_multi_items"] = items
+                        st.rerun()
 
 if target_mode == "単体":
     timestamps_input_ts = st.text_area(
