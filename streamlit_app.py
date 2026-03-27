@@ -1066,11 +1066,19 @@ def cb_fetch_description_timestamps_single() -> None:
     st.session_state.pop("ts_desc_err", None)
 
 
+def cb_fetch_and_apply_description_timestamps_single() -> None:
+    """概要欄のチャプター候補を取得し、入力欄へ反映する。"""
+    cb_fetch_description_timestamps_single()
+    if st.session_state.get("ts_desc_err"):
+        return
+    cb_apply_description_timestamps_single(do_preview=False)
+
+
 def cb_apply_description_timestamps_single(do_preview: bool = False) -> None:
     """cb_apply_description_timestamps_single の責務を実行する。"""
     ts_text = (st.session_state.get("ts_desc_candidate_text", "") or "").strip()
     if not ts_text:
-        st.session_state["ts_desc_err"] = "先に「概要欄から取得する」を実行してください。"
+        st.session_state["ts_desc_err"] = "先に「2-b. 概要欄から候補を取得」を実行してください。"
         return
 
     st.session_state["timestamps_input_ts"] = ts_text
@@ -1982,6 +1990,7 @@ if input_mode == "自動（コメントから取得）":
             "**操作手順（自動取得）**",
             "- 2-a. 取得条件を設定",
             "- 2-b. コメント候補を取得",
+            "- 2-b. 概要欄から候補を取得（単体のみ）",
             "- 2-c. 候補を選んで入力欄に反映",
             "- 2-d. 入力欄を直接編集して微調整",
         ])
@@ -2030,13 +2039,20 @@ if input_mode == "自動（コメントから取得）":
                 )
             with col_b4:
                 st.button(
-                    "2-b'''. 概要欄から取得する",
-                    key="ts_fetch_description_single",
-                    on_click=cb_fetch_description_timestamps_single,
+                    "2-b'''. コメントを取得しないで進める（再実行）",
+                    key="ts_skip_comments_single_retry",
+                    on_click=cb_skip_comment_fetch_single,
                     disabled=not is_api_key_ready,
                 )
 
         if target_mode == "単体":
+            st.button(
+                "2-b. 概要欄から候補を取得",
+                key="ts_fetch_and_apply_description_single",
+                on_click=cb_fetch_and_apply_description_timestamps_single,
+                disabled=not is_api_key_ready,
+            )
+
             if st.session_state.get("ts_auto_err"):
                 st.error(st.session_state["ts_auto_err"])
             if st.session_state.get("ts_auto_msg"):
