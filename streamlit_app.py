@@ -1132,8 +1132,11 @@ def cb_apply_description_timestamps_single(do_preview: bool = False) -> None:
         st.session_state["ts_desc_err"] = "先に「2-b. 概要欄から候補を取得」を実行してください。"
         return
 
+    # 概要欄候補の再反映時は、以降工程（プレビュー/CSV）を都度リセットする。
+    _clear_ts_preview_state(clear_csv=True)
+
     st.session_state["timestamps_input_ts"] = ts_text
-    st.session_state["ts_desc_msg"] = "概要欄のタイムスタンプ候補を入力欄に反映しました。"
+    st.session_state["ts_desc_msg"] = "概要欄のタイムスタンプ候補を入力欄に反映しました（以降工程をリセットしました）。"
     st.session_state.pop("ts_desc_err", None)
 
     if do_preview:
@@ -2194,23 +2197,13 @@ if input_mode == "自動（コメントから取得）":
             if desc_candidate:
                 with st.expander("概要欄から抽出したタイムスタンプ候補"):
                     st.code(desc_candidate)
-                col_desc1, col_desc2 = st.columns([1, 1])
-                with col_desc1:
-                    st.button(
-                        "概要欄候補を入力欄に反映",
-                        key="ts_apply_description_single",
-                        on_click=cb_apply_description_timestamps_single,
-                        kwargs={"do_preview": False},
-                        disabled=not is_api_key_ready,
-                    )
-                with col_desc2:
-                    st.button(
-                        "概要欄候補を再反映",
-                        key="ts_apply_description_single_retry",
-                        on_click=cb_apply_description_timestamps_single,
-                        kwargs={"do_preview": False},
-                        disabled=not is_api_key_ready,
-                    )
+                st.button(
+                    "概要欄候補を入力欄に反映（再反映）",
+                    key="ts_apply_description_single",
+                    on_click=cb_apply_description_timestamps_single,
+                    kwargs={"do_preview": False},
+                    disabled=not is_api_key_ready,
+                )
 
             cands = st.session_state.get("ts_auto_candidates", []) or []
             if cands:
