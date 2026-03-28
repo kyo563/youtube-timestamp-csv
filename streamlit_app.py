@@ -1155,9 +1155,8 @@ def cb_apply_candidate(index: int, do_preview: bool) -> None:
 
 def cb_skip_comment_fetch_single() -> None:
     """cb_skip_comment_fetch_single の責務を実行する。"""
-    st.session_state["ts_auto_candidates"] = []
+    reset_step_2b_state_single()
     st.session_state["ts_auto_msg"] = "コメントを取得せずに進行します。URLと楽曲リストの入力内容でプレビュー/CSV生成ができます。"
-    st.session_state.pop("ts_auto_err", None)
 
 
 def cb_fetch_multi_video_candidates() -> None:
@@ -2169,26 +2168,14 @@ if input_mode == "自動（コメントから取得）":
         with col_a4:
             st.checkbox("タイムスタンプ行のみ抽出", value=True, key="ts_auto_only_ts_lines")
 
-        if target_mode == "単体":
-            col_b1, col_b2, col_b3, col_b4 = st.columns([1, 1, 1, 1])
-        else:
-            col_b1, col_b2 = st.columns([1, 1])
+        col_b1, col_b2 = st.columns([1, 1])
         with col_b1:
             st.button("2-b. コメント候補を取得", key="ts_fetch_comments_common", on_click=cb_fetch_comment_candidates_by_mode, disabled=not is_api_key_ready)
         with col_b2:
-            st.button("2-b'. コメント候補を再取得", key="ts_fetch_comments_common_retry", on_click=cb_fetch_comment_candidates_by_mode, disabled=not is_api_key_ready)
-        if target_mode == "単体":
-            with col_b3:
+            if target_mode == "単体":
                 st.button(
-                    "2-b''. コメントを取得しないで進める",
+                    "2-b'. コメントを取得しないで進める",
                     key="ts_skip_comments_single",
-                    on_click=cb_skip_comment_fetch_single,
-                    disabled=not is_api_key_ready,
-                )
-            with col_b4:
-                st.button(
-                    "2-b'''. コメントを取得しないで進める（再実行）",
-                    key="ts_skip_comments_single_retry",
                     on_click=cb_skip_comment_fetch_single,
                     disabled=not is_api_key_ready,
                 )
