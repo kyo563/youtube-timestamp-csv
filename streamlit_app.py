@@ -2386,11 +2386,7 @@ elif is_api_key_ready and manual_date_raw_ts:
 
 st.markdown("### 7. プレビュー確認")
 # ここでは「CSV出力前に解析結果を確認・微調整する」ためのプレビューを作る。
-st.caption("修正したい場合は『3-B. 訂正モードへ戻る』で入力を編集し、再度『7. プレビューを更新』してください。")
-
-st.button("3-B. 訂正モードへ戻る", key="ts_back_to_fix", on_click=cb_back_to_correction_mode, disabled=not is_api_key_ready)
-if st.session_state.get("ts_fix_msg"):
-    st.info(st.session_state["ts_fix_msg"])
+st.caption("入力を修正した場合は、そのまま『7. プレビューを更新』を押してください。")
 
 col_p1, col_p2 = st.columns([1, 1])
 with col_p1:
