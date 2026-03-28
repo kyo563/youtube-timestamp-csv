@@ -28,6 +28,7 @@ GLOBAL_API_KEY = st.secrets.get("YT_API_KEY", "")
 COMMENT_ORDER_LABELS: Dict[str, str] = {
     "関連度順（おすすめコメント優先）": "relevance",
     "新しい順（投稿時刻が新しい順）": "time",
+    "概要欄から取得": "description",
 }
 
 # ==============================
@@ -1015,7 +1016,7 @@ def cb_fetch_candidates(do_autoselect_preview: bool) -> None:
 
     order = st.session_state.get("ts_auto_order", "relevance")
     terms = st.session_state.get("ts_auto_search_terms", "")
-    pages = int(st.session_state.get("ts_auto_pages", 3))
+    pages = int(st.session_state.get("ts_auto_pages", 1))
 
     cands, err = fetch_timestamp_comment_candidates(
         video_id=vid,
@@ -1138,7 +1139,7 @@ def cb_fetch_multi_video_candidates() -> None:
 
     order = st.session_state.get("ts_auto_order", "relevance")
     terms = st.session_state.get("ts_auto_search_terms", "")
-    pages = int(st.session_state.get("ts_auto_pages", 3))
+    pages = int(st.session_state.get("ts_auto_pages", 1))
 
     items: Dict[str, dict] = {}
     fail_count = 0
@@ -1149,32 +1150,58 @@ def cb_fetch_multi_video_candidates() -> None:
             fail_count += 1
             continue
         video_title = fetch_video_title_from_oembed(u)
-        cands, err = fetch_timestamp_comment_candidates(
-            video_id=vid,
-            api_key=api_key,
-            order=order,
-            search_terms=terms,
-            max_pages=pages,
-        )
-        if err:
-            if (err or "").startswith("コメントが無効"):
-                skip_count += 1
-            else:
+        if order == "description":
+            description, err = fetch_video_description(vid, api_key)
+            if err:
                 fail_count += 1
-            items[vid] = {
-                "url": u,
-                "title": video_title,
-                "candidates": [],
-                "applied_text": "",
-                "error": err,
-            }
-            continue
+                items[vid] = {
+                    "url": u,
+                    "title": video_title,
+                    "candidates": [],
+                    "applied_text": "",
+                    "error": err,
+                }
+                continue
+            extracted = _extract_timestamp_lines(description, st.session_state.get("flip_ts", False))
+            if not extracted:
+                skip_count += 1
+                items[vid] = {
+                    "url": u,
+                    "title": video_title,
+                    "candidates": [],
+                    "applied_text": "",
+                    "error": "概要欄からタイムスタンプ行を検出できませんでした。",
+                }
+                continue
+            cands = [{"text": extracted, "ts_lines": len(extracted.splitlines()), "likeCount": 0, "is_owner": False}]
+            default_text = extracted
+        else:
+            cands, err = fetch_timestamp_comment_candidates(
+                video_id=vid,
+                api_key=api_key,
+                order=order,
+                search_terms=terms,
+                max_pages=pages,
+            )
+            if err:
+                if (err or "").startswith("コメントが無効"):
+                    skip_count += 1
+                else:
+                    fail_count += 1
+                items[vid] = {
+                    "url": u,
+                    "title": video_title,
+                    "candidates": [],
+                    "applied_text": "",
+                    "error": err,
+                }
+                continue
 
-        default_text = cands[0]["text"] if cands else ""
-        if st.session_state.get("ts_auto_only_ts_lines", True):
-            extracted = _extract_timestamp_lines(default_text, st.session_state.get("flip_ts", False))
-            if extracted:
-                default_text = extracted
+            default_text = cands[0]["text"] if cands else ""
+            if st.session_state.get("ts_auto_only_ts_lines", True):
+                extracted = _extract_timestamp_lines(default_text, st.session_state.get("flip_ts", False))
+                if extracted:
+                    default_text = extracted
 
         items[vid] = {
             "url": u,
@@ -1229,7 +1256,7 @@ def cb_refresh_multi_video_candidates() -> None:
 
     order = st.session_state.get("ts_auto_order", "relevance")
     terms = st.session_state.get("ts_auto_search_terms", "")
-    pages = int(st.session_state.get("ts_auto_pages", 3))
+    pages = int(st.session_state.get("ts_auto_pages", 1))
 
     refreshed_count = 0
     fail_count = 0
@@ -1241,26 +1268,43 @@ def cb_refresh_multi_video_candidates() -> None:
 
         url = (it.get("url") or f"https://www.youtube.com/watch?v={vid}").strip()
         video_id = extract_video_id(url) or vid
-        cands, err = fetch_timestamp_comment_candidates(
-            video_id=video_id,
-            api_key=api_key,
-            order=order,
-            search_terms=terms,
-            max_pages=pages,
-        )
-
-        if err:
-            if (err or "").startswith("コメントが無効"):
-                skip_count += 1
-            else:
+        if order == "description":
+            description, err = fetch_video_description(video_id, api_key)
+            if err:
                 fail_count += 1
-            it["error"] = err
-            it["candidates"] = []
+                it["error"] = err
+                it["candidates"] = []
+            else:
+                extracted = _extract_timestamp_lines(description, st.session_state.get("flip_ts", False))
+                if not extracted:
+                    skip_count += 1
+                    it["error"] = "概要欄からタイムスタンプ行を検出できませんでした。"
+                    it["candidates"] = []
+                else:
+                    refreshed_count += 1
+                    it["error"] = ""
+                    it["candidates"] = [{"text": extracted, "ts_lines": len(extracted.splitlines()), "likeCount": 0, "is_owner": False}]
         else:
-            refreshed_count += 1
-            it["error"] = ""
-            it["candidates"] = cands
-            it["title"] = fetch_video_title_from_oembed(url)
+            cands, err = fetch_timestamp_comment_candidates(
+                video_id=video_id,
+                api_key=api_key,
+                order=order,
+                search_terms=terms,
+                max_pages=pages,
+            )
+
+            if err:
+                if (err or "").startswith("コメントが無効"):
+                    skip_count += 1
+                else:
+                    fail_count += 1
+                it["error"] = err
+                it["candidates"] = []
+            else:
+                refreshed_count += 1
+                it["error"] = ""
+                it["candidates"] = cands
+                it["title"] = fetch_video_title_from_oembed(url)
 
         items[vid] = it
 
@@ -1440,10 +1484,56 @@ def cb_apply_latest_selection() -> None:
 
 def cb_fetch_comment_candidates_by_mode() -> None:
     """cb_fetch_comment_candidates_by_mode の責務を実行する。"""
-    if st.session_state.get("ts_target_mode") == "単体":
+    target_mode = st.session_state.get("ts_target_mode")
+    order = st.session_state.get("ts_auto_order", "relevance")
+    if target_mode == "単体":
+        reset_step_2b_state_single()
+        if order == "description":
+            cb_fetch_and_apply_description_timestamps_single()
+            return
         cb_fetch_candidates(do_autoselect_preview=False)
-    else:
-        cb_fetch_multi_video_candidates()
+        return
+
+    reset_step_2b_state_multi()
+    cb_fetch_multi_video_candidates()
+
+
+def reset_step_2b_state_single() -> None:
+    """単体モードの2-b関連状態を初期化する。"""
+    st.session_state["ts_auto_candidates"] = []
+    st.session_state.pop("ts_auto_pick", None)
+    st.session_state.pop("ts_auto_msg", None)
+    st.session_state.pop("ts_auto_err", None)
+    st.session_state["ts_desc_candidate_text"] = ""
+    st.session_state.pop("ts_desc_msg", None)
+    st.session_state.pop("ts_desc_err", None)
+
+
+def reset_step_2b_state_multi() -> None:
+    """複数モードの2-b関連状態を初期化する。"""
+    st.session_state["ts_multi_items"] = {}
+    st.session_state["ts_multi_order"] = []
+    st.session_state.pop("ts_multi_msg", None)
+    st.session_state.pop("ts_multi_err", None)
+
+
+def reset_after_manual_login() -> None:
+    """手動ログイン後に2-b以降の状態を初期化する。"""
+    reset_step_2b_state_single()
+    reset_step_2b_state_multi()
+    _clear_ts_preview_state(clear_csv=True)
+    st.session_state["timestamps_input_ts"] = ""
+    st.session_state["ts_fix_msg"] = "APIキーを再設定しました。2-b以降の状態をリセットしました。"
+
+
+def cb_manual_login_with_reset() -> None:
+    """手動ログイン（リセット付き）を実行する。"""
+    key = (st.session_state.get("shared_api_key", "") or "").strip()
+    if not key:
+        st.session_state["ts_auto_err"] = "APIキーを入力してください。"
+        return
+    st.session_state["shared_api_key"] = key
+    reset_after_manual_login()
 
 
 def cb_reset_latest_selection() -> None:
@@ -1791,6 +1881,11 @@ st.text_input(
     placeholder="YouTube Data API v3",
     help="設定すると全タブで共通利用します。",
 )
+st.button(
+    "このキーでログイン（リセット実行）",
+    key="ts_manual_login_with_reset",
+    on_click=cb_manual_login_with_reset,
+)
 
 # ==============================
 # メインレイアウト
@@ -1997,8 +2092,7 @@ if input_mode == "自動（コメントから取得）":
         "\n".join([
             "**操作手順（自動取得）**",
             "- 2-a. 取得条件を設定",
-            "- 2-b. コメント候補を取得",
-            "- 2-b. 概要欄から候補を取得（単体のみ）",
+            "- 2-b. コメント候補を取得（取得順で実行）",
             "- 2-c. 候補を選んで入力欄に反映",
             "- 2-d. 入力欄を直接編集して微調整",
         ])
@@ -2019,13 +2113,13 @@ if input_mode == "自動（コメントから取得）":
                 index=list(COMMENT_ORDER_LABELS.keys()).index(default_label),
             )
             st.session_state["ts_auto_order"] = COMMENT_ORDER_LABELS[selected_label]
-            st.caption("関連度順: 評価が高い/動画に関連が強いコメントを優先。新しい順: 直近に投稿されたコメントを優先。")
+            st.caption("関連度順: 評価が高い/動画に関連が強いコメントを優先。新しい順: 直近に投稿されたコメントを優先。概要欄から取得: 概要欄のタイムスタンプ行を抽出。")
         with col_a2:
             st.text_input("検索語（任意）", value="", key="ts_auto_search_terms")
 
         col_a3, col_a4 = st.columns([2, 2])
         with col_a3:
-            st.slider("探索ページ数", min_value=1, max_value=10, value=3, step=1, key="ts_auto_pages")
+            st.slider("探索ページ数", min_value=1, max_value=10, value=1, step=1, key="ts_auto_pages")
         with col_a4:
             st.checkbox("タイムスタンプ行のみ抽出", value=True, key="ts_auto_only_ts_lines")
 
@@ -2054,13 +2148,6 @@ if input_mode == "自動（コメントから取得）":
                 )
 
         if target_mode == "単体":
-            st.button(
-                "2-b. 概要欄から候補を取得",
-                key="ts_fetch_and_apply_description_single",
-                on_click=cb_fetch_and_apply_description_timestamps_single,
-                disabled=not is_api_key_ready,
-            )
-
             if st.session_state.get("ts_auto_err"):
                 st.error(st.session_state["ts_auto_err"])
             if st.session_state.get("ts_auto_msg"):
