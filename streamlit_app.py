@@ -970,7 +970,7 @@ def _ensure_multi_text_state(video_id: str, fallback_text: str = "") -> str:
 
 def _get_manual_yyyymmdd() -> str:
     """_get_manual_yyyymmdd の責務を実行する。"""
-    if st.session_state.get("ts_skip_date_fetch", False):
+    if st.session_state.get("ts_no_date_prefix", False):
         return ""
     raw = (st.session_state.get("ts_manual_date_raw", "") or "").strip()
     if not raw:
@@ -995,7 +995,7 @@ def _set_preview_from_text(url: str, ts_text: str) -> None:
     prepend_date = not st.session_state.get("ts_no_date_prefix", False)
     api_key = _get_ts_api_key()
     manual_date = _get_manual_yyyymmdd()
-    skip_date_fetch = bool(st.session_state.get("ts_skip_date_fetch", False))
+    skip_date_fetch = bool(st.session_state.get("ts_no_date_prefix", False))
 
     _clear_ts_preview_state()
 
@@ -2118,26 +2118,21 @@ input_mode = st.radio(
 
 prepend_date_ts: bool = not st.session_state.get("ts_no_date_prefix", False)
 st.markdown("### 2.5 日付の取得方法")
-skip_date_fetch_ts = st.checkbox(
-    "日付情報を入力しない",
-    value=st.session_state.get("ts_skip_date_fetch", False),
-    key="ts_skip_date_fetch",
-    disabled=not is_api_key_ready,
-    help="チェックON時は日付取得（API/手入力）を行いません。",
-)
-manual_date_raw_ts: str = st.text_input(
-    "公開日を手動指定（任意）",
-    placeholder="例: 2025/11/19, 11/19, 3月20日",
-    key="ts_manual_date_raw",
-    disabled=(not is_api_key_ready) or skip_date_fetch_ts,
-    help="チェックOFFかつ未入力ならAPI自動取得、入力済みなら手入力値を優先します。",
-)
-st.checkbox(
+skip_date_fetch_ts = False
+no_date_prefix_ts = st.checkbox(
     "日付を追記しない",
     value=st.session_state.get("ts_no_date_prefix", False),
     key="ts_no_date_prefix",
     disabled=not is_api_key_ready,
     help="チェックON時は、D列リンク表示名の先頭に日付(YYYYMMDD)を付けません。",
+)
+skip_date_fetch_ts = bool(no_date_prefix_ts)
+manual_date_raw_ts: str = st.text_input(
+    "公開日を手動指定（任意）",
+    placeholder="例: 2025/11/19, 11/19, 3月20日",
+    key="ts_manual_date_raw",
+    disabled=(not is_api_key_ready) or no_date_prefix_ts,
+    help="チェックOFFかつ未入力ならAPI自動取得、入力済みなら手入力値を優先します。",
 )
 prepend_date_ts = not st.session_state.get("ts_no_date_prefix", False)
 manual_date_ts: str = ""
