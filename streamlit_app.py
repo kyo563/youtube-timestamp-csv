@@ -1609,11 +1609,6 @@ def cb_reset_timestamp_inputs() -> None:
     st.session_state.pop("ts_multi_err", None)
 
 
-def cb_clear_preview() -> None:
-    """cb_clear_preview の責務を実行する。"""
-    _clear_ts_preview_state(clear_csv=False)
-
-
 def cb_clear_csv_output() -> None:
     """cb_clear_csv_output の責務を実行する。"""
     st.session_state.pop("ts_csv_bytes", None)
@@ -2411,13 +2406,9 @@ elif is_api_key_ready and manual_date_raw_ts:
 
 st.markdown("### 7. プレビュー確認")
 # ここでは「CSV出力前に解析結果を確認・微調整する」ためのプレビューを作る。
-st.caption("修正したい場合は『2. タイムスタンプを用意』に戻って編集し、再度プレビューを更新してください。")
+st.caption("修正したい場合は『3-B. 訂正モードへ戻る』で入力を編集し、再度『7. プレビューを更新』してください。")
 
-col_reset_preview1, col_reset_preview2 = st.columns([1, 1])
-with col_reset_preview1:
-    st.button("3-A. プレビューをクリア", key="ts_clear_preview", on_click=cb_clear_preview, disabled=not is_api_key_ready)
-with col_reset_preview2:
-    st.button("3-B. 訂正モードへ戻る", key="ts_back_to_fix", on_click=cb_back_to_correction_mode, disabled=not is_api_key_ready)
+st.button("3-B. 訂正モードへ戻る", key="ts_back_to_fix", on_click=cb_back_to_correction_mode, disabled=not is_api_key_ready)
 if st.session_state.get("ts_fix_msg"):
     st.info(st.session_state["ts_fix_msg"])
 
