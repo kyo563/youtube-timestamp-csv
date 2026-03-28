@@ -1359,6 +1359,52 @@ def cb_refresh_multi_video_candidates() -> None:
     st.session_state.pop("ts_multi_err", None)
 
 
+def cb_reflect_multi_inputs_to_preview() -> None:
+    """複数動画入力欄の内容を同期し、プレビューへ反映する。"""
+    items = st.session_state.get("ts_multi_items", {}) or {}
+    ordered_ids = st.session_state.get("ts_multi_order", []) or []
+    if not items or not ordered_ids:
+        st.session_state["ts_multi_err"] = "反映対象の動画がありません。"
+        return
+
+    for vid in ordered_ids:
+        it = items.get(vid)
+        if not it:
+            continue
+        it["applied_text"] = (st.session_state.get(_multi_text_key(vid), it.get("applied_text", "")) or "").strip()
+        items[vid] = it
+    st.session_state["ts_multi_items"] = items
+
+    api_key = _get_ts_api_key()
+    if not api_key:
+        st.session_state["ts_multi_err"] = "プレビュー反映にはAPIキーが必要です。"
+        return
+
+    _clear_ts_preview_state(clear_csv=True)
+
+    try:
+        preview_rows, invalid_lines, warnings = build_multi_video_preview(
+            items=items,
+            ordered_video_ids=ordered_ids,
+            tz_name=TZ_NAME,
+            api_key=api_key,
+            manual_yyyymmdd=_get_manual_yyyymmdd(),
+            flip=st.session_state.get("flip_ts", False),
+            prepend_date=not st.session_state.get("ts_no_date_prefix", False),
+            skip_date_fetch=bool(st.session_state.get("ts_no_date_prefix", False)),
+        )
+        st.session_state["ts_preview_df"] = preview_rows
+        st.session_state["ts_row_swap_flags"] = [False] * len(preview_rows)
+        st.session_state["ts_preview_invalid"] = invalid_lines
+        st.session_state["ts_preview_title"] = f"複数動画プレビュー（{len(preview_rows)}行）"
+        st.session_state["ts_multi_msg"] = (
+            f"入力内容をプレビューへ反映しました（解析 {len(preview_rows)} 件 / 未解析 {len(invalid_lines)} 件 / 注意 {len(warnings)} 件）"
+        )
+        st.session_state.pop("ts_multi_err", None)
+    except Exception as e:
+        st.session_state["ts_multi_err"] = f"プレビュー反映に失敗しました：{e}"
+
+
 def cb_fetch_latest_multi_video_candidates() -> None:
     """cb_fetch_latest_multi_video_candidates の責務を実行する。"""
     api_key = _get_ts_api_key()
@@ -2306,9 +2352,9 @@ if input_mode == "自動（コメントから取得）":
                 col_e1, col_e2 = st.columns([1, 1])
                 with col_e1:
                     st.button(
-                        "2-e. コメント候補を更新（再取得）",
+                        "2-e. 入力内容をプレビューへ反映",
                         key="ts_multi_refresh_candidates",
-                        on_click=cb_refresh_multi_video_candidates,
+                        on_click=cb_reflect_multi_inputs_to_preview,
                         disabled=not is_api_key_ready,
                     )
                 with col_e2:
