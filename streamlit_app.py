@@ -303,8 +303,17 @@ def iso_utc_to_tz_yyyymmdd(iso_str: str, tz_name: str) -> Optional[str]:
     return ymd
 
 
-def resolve_display_date(video_id: str, manual_yyyymmdd: str, api_key: str, tz_name: str) -> Tuple[Optional[str], Optional[str]]:
+def resolve_display_date(
+    video_id: str,
+    manual_yyyymmdd: str,
+    api_key: str,
+    tz_name: str,
+    skip_date_fetch: bool = False,
+) -> Tuple[Optional[str], Optional[str]]:
     """resolve_display_date の責務を実行する。"""
+    if skip_date_fetch:
+        return None, "skip"
+
     if manual_yyyymmdd and re.fullmatch(r"\d{8}", manual_yyyymmdd):
         return manual_yyyymmdd, "manual"
 
@@ -580,6 +589,7 @@ def generate_rows(
     manual_yyyymmdd: str,
     flip: bool,
     prepend_date: bool = True,
+    skip_date_fetch: bool = False,
 ) -> Tuple[List[List[str]], List[dict], List[str], str]:
     """generate_rows の責務を実行する。"""
     vid = extract_video_id(u)
@@ -589,7 +599,9 @@ def generate_rows(
 
     video_title = fetch_video_title_from_oembed(base_watch)
 
-    date_yyyymmdd, date_source = resolve_display_date(vid, manual_yyyymmdd, api_key, tz_name)
+    date_yyyymmdd, date_source = resolve_display_date(
+        vid, manual_yyyymmdd, api_key, tz_name, skip_date_fetch=skip_date_fetch
+    )
     display_name = build_display_name(video_title, date_yyyymmdd, prepend_date=prepend_date)
 
     rows: List[List[str]] = [["アーティスト名", "楽曲名", "", "YouTubeリンク"]]
@@ -739,6 +751,7 @@ def build_multi_video_rows(
     manual_yyyymmdd: str,
     flip: bool,
     prepend_date: bool = True,
+    skip_date_fetch: bool = False,
 ) -> Tuple[List[List[str]], List[str]]:
     """build_multi_video_rows の責務を実行する。"""
     rows: List[List[str]] = [["アーティスト名", "楽曲名", "", "YouTubeリンク"]]
@@ -763,7 +776,9 @@ def build_multi_video_rows(
 
         if not ts_text:
             title = (it.get("title") or "").strip() or fetch_video_title_from_oembed(video_url)
-            date_yyyymmdd, _ = resolve_display_date(vid, manual_yyyymmdd, api_key, tz_name)
+            date_yyyymmdd, _ = resolve_display_date(
+                vid, manual_yyyymmdd, api_key, tz_name, skip_date_fetch=skip_date_fetch
+            )
 
             link = f"https://www.youtube.com/watch?v={vid}"
             label = build_display_name(title, date_yyyymmdd, prepend_date=prepend_date)
@@ -781,7 +796,14 @@ def build_multi_video_rows(
 
         try:
             single_rows, _, invalid, _ = generate_rows(
-                video_url, ts_text, tz_name, api_key, manual_yyyymmdd, flip, prepend_date
+                video_url,
+                ts_text,
+                tz_name,
+                api_key,
+                manual_yyyymmdd,
+                flip,
+                prepend_date,
+                skip_date_fetch=skip_date_fetch,
             )
             for r in single_rows[1:]:
                 rows.append([r[0], r[1], r[2], r[3]])
@@ -804,6 +826,7 @@ def build_multi_video_preview(
     manual_yyyymmdd: str,
     flip: bool,
     prepend_date: bool = True,
+    skip_date_fetch: bool = False,
 ) -> Tuple[List[dict], List[str], List[str]]:
     """build_multi_video_preview の責務を実行する。"""
     preview_rows: List[dict] = []
@@ -820,7 +843,9 @@ def build_multi_video_preview(
 
         if not ts_text:
             title = (it.get("title") or "").strip() or fetch_video_title_from_oembed(video_url)
-            date_yyyymmdd, date_source = resolve_display_date(vid, manual_yyyymmdd, api_key, tz_name)
+            date_yyyymmdd, date_source = resolve_display_date(
+                vid, manual_yyyymmdd, api_key, tz_name, skip_date_fetch=skip_date_fetch
+            )
             display_name = build_display_name(title, date_yyyymmdd, prepend_date=prepend_date)
             artist, song = split_artist_song_from_title(title)
             preview_rows.append({
@@ -837,7 +862,14 @@ def build_multi_video_preview(
 
         try:
             _, parsed_preview, invalid, _ = generate_rows(
-                video_url, ts_text, tz_name, api_key, manual_yyyymmdd, flip, prepend_date
+                video_url,
+                ts_text,
+                tz_name,
+                api_key,
+                manual_yyyymmdd,
+                flip,
+                prepend_date,
+                skip_date_fetch=skip_date_fetch,
             )
             for p in parsed_preview:
                 preview_rows.append({
@@ -938,6 +970,8 @@ def _ensure_multi_text_state(video_id: str, fallback_text: str = "") -> str:
 
 def _get_manual_yyyymmdd() -> str:
     """_get_manual_yyyymmdd の責務を実行する。"""
+    if st.session_state.get("ts_skip_date_fetch", False):
+        return ""
     raw = (st.session_state.get("ts_manual_date_raw", "") or "").strip()
     if not raw:
         return ""
@@ -961,11 +995,19 @@ def _set_preview_from_text(url: str, ts_text: str) -> None:
     prepend_date = not st.session_state.get("ts_no_date_prefix", False)
     api_key = _get_ts_api_key()
     manual_date = _get_manual_yyyymmdd()
+    skip_date_fetch = bool(st.session_state.get("ts_skip_date_fetch", False))
 
     _clear_ts_preview_state()
 
     rows, preview, invalid, video_title = generate_rows(
-        url, ts_text, TZ_NAME, api_key, manual_date, flip, prepend_date
+        url,
+        ts_text,
+        TZ_NAME,
+        api_key,
+        manual_date,
+        flip,
+        prepend_date,
+        skip_date_fetch=skip_date_fetch,
     )
     st.session_state["ts_preview_df"] = preview
     st.session_state["ts_row_swap_flags"] = [False] * len(preview)
@@ -1897,12 +1939,18 @@ st.subheader("タイムスタンプCSVジェネレーター")
 api_key_ts = resolve_api_key()
 is_api_key_ready = bool(api_key_ts)
 flow_steps = [
-    "1) 対象動画を指定（単体 / 複数）",
-    "2) タイムスタンプ入力（手動/コメント取得）",
-    "3) プレビュー確認",
-    "4) CSV生成・ダウンロード",
+    "1) APIキーを設定",
+    "2) 対象URLを入力（自動判定: 単体/複数）",
+    "2.5) 日付の取得方法を設定",
+    "3) 対象動画を確定（複数時のみ）",
+    "4) タイムスタンプ取得条件を設定",
+    "5) タイムスタンプ候補を取得・反映",
+    "6) タイムスタンプを編集",
+    "7) プレビュー確認",
+    "8) CSV生成・ダウンロード",
 ]
 st.info("\n".join(flow_steps))
+st.caption("単体動画のときは 3) 対象動画確定 を表示スキップし、2)で入力した動画を自動確定します。")
 if not is_api_key_ready:
     st.warning("YouTube APIキーを入力すると操作できます。")
 
@@ -2068,14 +2116,21 @@ input_mode = st.radio(
     key="ts_input_mode",
 )
 
-manual_date_raw_ts: str = ""
-manual_date_ts: str = ""
 prepend_date_ts: bool = not st.session_state.get("ts_no_date_prefix", False)
-manual_date_raw_ts = st.text_input(
-    "公開日を手動指定（任意・入力時は最優先）",
+st.markdown("### 2.5 日付の取得方法")
+skip_date_fetch_ts = st.checkbox(
+    "日付情報を入力しない",
+    value=st.session_state.get("ts_skip_date_fetch", False),
+    key="ts_skip_date_fetch",
+    disabled=not is_api_key_ready,
+    help="チェックON時は日付取得（API/手入力）を行いません。",
+)
+manual_date_raw_ts: str = st.text_input(
+    "公開日を手動指定（任意）",
     placeholder="例: 2025/11/19, 11/19, 3月20日",
     key="ts_manual_date_raw",
-    disabled=not is_api_key_ready,
+    disabled=(not is_api_key_ready) or skip_date_fetch_ts,
+    help="チェックOFFかつ未入力ならAPI自動取得、入力済みなら手入力値を優先します。",
 )
 st.checkbox(
     "日付を追記しない",
@@ -2085,6 +2140,7 @@ st.checkbox(
     help="チェックON時は、D列リンク表示名の先頭に日付(YYYYMMDD)を付けません。",
 )
 prepend_date_ts = not st.session_state.get("ts_no_date_prefix", False)
+manual_date_ts: str = ""
 
 if input_mode == "自動（コメントから取得）":
     st.markdown("#### コメントから候補を取り込む")
@@ -2348,7 +2404,9 @@ if target_mode == "単体":
 else:
     timestamps_input_ts = ""
 
-if is_api_key_ready and manual_date_raw_ts:
+if is_api_key_ready and skip_date_fetch_ts:
+    st.caption("日付取得はスキップ設定です（日付なしで出力します）。")
+elif is_api_key_ready and manual_date_raw_ts:
     normalized = normalize_manual_date_input(manual_date_raw_ts, TZ_NAME)
     if normalized:
         manual_date_ts = normalized
@@ -2356,7 +2414,7 @@ if is_api_key_ready and manual_date_raw_ts:
     else:
         st.error("日付の解釈に失敗しました。例: 2025/11/19, 11/19, 3月20日")
 
-st.markdown("### 3. プレビュー確認")
+st.markdown("### 7. プレビュー確認")
 # ここでは「CSV出力前に解析結果を確認・微調整する」ためのプレビューを作る。
 st.caption("修正したい場合は『2. タイムスタンプを用意』に戻って編集し、再度プレビューを更新してください。")
 
@@ -2372,7 +2430,7 @@ col_p1, col_p2 = st.columns([1, 1])
 with col_p1:
     st.toggle("左右反転", value=False, key="flip_ts")
 with col_p2:
-    preview_clicked = st.button("3. プレビューを更新", key="preview_ts", disabled=not is_api_key_ready)
+    preview_clicked = st.button("7. プレビューを更新", key="preview_ts", disabled=not is_api_key_ready)
 
 if preview_clicked:
     # 新しいプレビューを作る前に、前回のプレビュー/CSVを初期化して状態を揃える。
@@ -2388,7 +2446,14 @@ if preview_clicked:
         else:
             try:
                 rows, preview, invalid, video_title = generate_rows(
-                    url, timestamps_text, TZ_NAME, api_key_ts, manual_date_ts, flip, prepend_date_ts
+                    url,
+                    timestamps_text,
+                    TZ_NAME,
+                    api_key_ts,
+                    manual_date_ts,
+                    flip,
+                    prepend_date_ts,
+                    skip_date_fetch=skip_date_fetch_ts,
                 )
                 st.session_state["ts_preview_df"] = preview
                 st.session_state["ts_row_swap_flags"] = [False] * len(preview)
@@ -2408,6 +2473,7 @@ if preview_clicked:
                 manual_yyyymmdd=manual_date_ts,
                 flip=st.session_state.get("flip_ts", False),
                 prepend_date=prepend_date_ts,
+                skip_date_fetch=skip_date_fetch_ts,
             )
             st.session_state["ts_preview_df"] = preview_rows
             st.session_state["ts_row_swap_flags"] = [False] * len(preview_rows)
@@ -2419,10 +2485,10 @@ if preview_clicked:
         except Exception as e:
             st.error(f"エラー: {e}")
 
-st.markdown("### 4. CSV出力")
+st.markdown("### 8. CSV出力")
 # ここではプレビュー済みデータを CSV に変換し、ダウンロードボタンへ受け渡す。
 
-csv_clicked = st.button("4. CSV生成", key="csv_ts_common", disabled=not is_api_key_ready)
+csv_clicked = st.button("8. CSV生成", key="csv_ts_common", disabled=not is_api_key_ready)
 if csv_clicked:
     if target_mode == "単体":
         timestamps_text = st.session_state.get("timestamps_input_ts", "")
@@ -2434,7 +2500,14 @@ if csv_clicked:
         else:
             try:
                 rows, _, invalid, video_title = generate_rows(
-                    url, timestamps_text, TZ_NAME, api_key_ts, manual_date_ts, flip, prepend_date_ts
+                    url,
+                    timestamps_text,
+                    TZ_NAME,
+                    api_key_ts,
+                    manual_date_ts,
+                    flip,
+                    prepend_date_ts,
+                    skip_date_fetch=skip_date_fetch_ts,
                 )
                 swap_flags = st.session_state.get("ts_row_swap_flags", []) or []
                 rows = apply_row_swap_flags_to_csv_rows(rows, swap_flags)
@@ -2456,6 +2529,7 @@ if csv_clicked:
                 manual_yyyymmdd=manual_date_ts,
                 flip=st.session_state.get("flip_ts", False),
                 prepend_date=prepend_date_ts,
+                skip_date_fetch=skip_date_fetch_ts,
             )
             swap_flags = st.session_state.get("ts_row_swap_flags", []) or []
             rows = apply_row_swap_flags_to_csv_rows(rows, swap_flags)
