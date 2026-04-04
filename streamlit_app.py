@@ -1967,7 +1967,7 @@ st.text_input(
     help="設定すると全タブで共通利用します。",
 )
 st.button(
-    "このキーでログイン（リセット実行）",
+    "ログイン",
     key="ts_manual_login_with_reset",
     on_click=cb_manual_login_with_reset,
 )
