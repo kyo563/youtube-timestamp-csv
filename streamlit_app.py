@@ -1009,6 +1009,11 @@ def _multi_candidate_pick_key(video_id: str) -> str:
     return f"ts_multi_candidate_pick_{video_id}"
 
 
+def _multi_candidate_applied_pick_key(video_id: str) -> str:
+    """複数動画の候補反映済み選択インデックスで使う Session State キーを返す。"""
+    return f"ts_multi_candidate_applied_pick_{video_id}"
+
+
 def _set_multi_text_state(video_id: str, text: str) -> None:
     """複数動画の採用テキストを Session State に反映する。"""
     st.session_state[_multi_text_key(video_id)] = text or ""
@@ -1043,6 +1048,9 @@ def _ensure_multi_video_state_defaults(video_id: str, fallback_text: str = "") -
     candidate_pick_key = _multi_candidate_pick_key(video_id)
     if candidate_pick_key not in st.session_state:
         st.session_state[candidate_pick_key] = 0
+    candidate_applied_pick_key = _multi_candidate_applied_pick_key(video_id)
+    if candidate_applied_pick_key not in st.session_state:
+        st.session_state[candidate_applied_pick_key] = int(st.session_state.get(candidate_pick_key, 0) or 0)
 
 
 def _format_multi_candidate_label(index: int, cand: dict) -> str:
@@ -2493,7 +2501,16 @@ if input_mode == "自動（コメントから取得）":
                             else:
                                 st.session_state[_multi_candidates_key(vid)] = cands[:20]
                                 st.session_state[_multi_candidate_pick_key(vid)] = 0
-                                st.session_state[_multi_fetch_status_key(vid)] = {"level": "success", "message": f"コメント候補を {min(len(cands), 20)} 件取得しました。"}
+                                top_text = (cands[0].get("text") or "").strip()
+                                apply_text = top_text
+                                if st.session_state.get("ts_auto_only_ts_lines", True):
+                                    apply_text = _extract_timestamp_lines(apply_text, st.session_state.get("flip_ts", False))
+                                if apply_text.strip():
+                                    st.session_state[_multi_text_key(vid)] = apply_text.strip()
+                                    st.session_state[_multi_candidate_applied_pick_key(vid)] = 0
+                                    st.session_state[_multi_fetch_status_key(vid)] = {"level": "success", "message": f"コメント候補を {min(len(cands), 20)} 件取得し、先頭候補を入力欄へ反映しました。"}
+                                else:
+                                    st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": "コメント候補は取得しましたが、先頭候補からタイムスタンプ行を抽出できませんでした。"}
                         else:
                             text_key = _multi_text_key(vid)
                             description, err = fetch_video_description(vid, api_key_ts)
@@ -2523,23 +2540,21 @@ if input_mode == "自動（コメントから取得）":
                                 format_func=lambda i: _format_multi_candidate_label(i + 1, cands[i]),
                             )
                             picked_text = (cands[selected_idx].get("text") or "").strip()
-                            with st.expander("選択中コメント候補（全文）"):
-                                st.text(picked_text or "(本文なし)")
-
-                            if st.button(
-                                f"選択した候補を入力欄へ反映（{vtitle}）",
-                                key=f"ts_multi_apply_candidate_{vid}",
-                                disabled=not is_api_key_ready,
-                            ):
+                            applied_pick_key = _multi_candidate_applied_pick_key(vid)
+                            last_applied_idx = st.session_state.get(applied_pick_key, -1)
+                            if selected_idx != last_applied_idx:
                                 text_key = _multi_text_key(vid)
                                 apply_text = picked_text
                                 if st.session_state.get("ts_auto_only_ts_lines", True):
                                     apply_text = _extract_timestamp_lines(apply_text, st.session_state.get("flip_ts", False))
                                 if apply_text.strip():
                                     st.session_state[text_key] = apply_text.strip()
+                                    st.session_state[applied_pick_key] = selected_idx
                                     st.session_state[_multi_fetch_status_key(vid)] = {"level": "success", "message": "選択したコメント候補を入力欄へ反映しました。"}
                                 else:
                                     st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": "選択候補からタイムスタンプ行を抽出できませんでした。"}
+                            with st.expander("選択中コメント候補（全文）"):
+                                st.text(picked_text or "(本文なし)")
 
                     fetch_status = st.session_state.get(_multi_fetch_status_key(vid), {"level": "", "message": ""}) or {}
                     if fetch_status.get("message"):
