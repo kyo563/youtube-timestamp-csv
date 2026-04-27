@@ -2203,6 +2203,22 @@ if target_mode == "複数" and latest_candidates:
     else:
         current_ids = st.session_state.get("ts_multi_latest_selected_ids", []) or []
         default_labels = [label for label in options if label_to_id.get(label) in current_ids]
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stMultiSelect"] span[data-baseweb="tag"] {
+                max-width: 48ch;
+            }
+            div[data-testid="stMultiSelect"] span[data-baseweb="tag"] span {
+                max-width: 44ch;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
         picked_labels = st.multiselect(
             "1-B. 対象動画を選択（複数可）",
@@ -2323,19 +2339,22 @@ if input_mode == "自動（コメントから取得）":
     if not api_key_ts:
         st.warning("コメント自動取得にはAPIキーが必要です。")
     else:
-        col_a1, col_a2 = st.columns([2, 2])
-        with col_a1:
-            current_order = st.session_state.get("ts_auto_order", "relevance")
-            label_by_value = {v: k for k, v in COMMENT_ORDER_LABELS.items()}
-            default_label = label_by_value.get(current_order, "関連度順（おすすめコメント優先）")
-            selected_label = st.selectbox(
-                "コメント取得順",
-                list(COMMENT_ORDER_LABELS.keys()),
-                index=list(COMMENT_ORDER_LABELS.keys()).index(default_label),
-            )
-            st.session_state["ts_auto_order"] = COMMENT_ORDER_LABELS[selected_label]
-            st.caption("関連度順: 評価が高い/動画に関連が強いコメントを優先。新しい順: 直近に投稿されたコメントを優先。概要欄から取得: 概要欄のタイムスタンプ行を抽出。")
-        with col_a2:
+        if target_mode == "単体":
+            col_a1, col_a2 = st.columns([2, 2])
+            with col_a1:
+                current_order = st.session_state.get("ts_auto_order", "relevance")
+                label_by_value = {v: k for k, v in COMMENT_ORDER_LABELS.items()}
+                default_label = label_by_value.get(current_order, "関連度順（おすすめコメント優先）")
+                selected_label = st.selectbox(
+                    "コメント取得順",
+                    list(COMMENT_ORDER_LABELS.keys()),
+                    index=list(COMMENT_ORDER_LABELS.keys()).index(default_label),
+                )
+                st.session_state["ts_auto_order"] = COMMENT_ORDER_LABELS[selected_label]
+                st.caption("関連度順: 評価が高い/動画に関連が強いコメントを優先。新しい順: 直近に投稿されたコメントを優先。概要欄から取得: 概要欄のタイムスタンプ行を抽出。")
+            with col_a2:
+                st.text_input("検索語（任意）", value="", key="ts_auto_search_terms")
+        else:
             st.text_input("検索語（任意）", value="", key="ts_auto_search_terms")
 
         col_a3, col_a4 = st.columns([2, 2])
@@ -2427,17 +2446,20 @@ if input_mode == "自動（コメントから取得）":
                     if it.get("error"):
                         st.warning(f"初回取得時の状態: {it['error']}")
 
-                    date_enabled = st.checkbox(
-                        f"日付を付与（{vtitle}）",
-                        key=_multi_date_enabled_key(vid),
-                        disabled=not is_api_key_ready,
-                    )
-                    st.text_input(
-                        f"手入力日付（{vtitle}）",
-                        placeholder="例: 2025/11/19, 11/19, 3月20日",
-                        key=_multi_manual_date_key(vid),
-                        disabled=(not is_api_key_ready) or (not date_enabled),
-                    )
+                    date_col1, date_col2 = st.columns([1, 3])
+                    with date_col1:
+                        date_enabled = st.checkbox(
+                            "日付を付与",
+                            key=_multi_date_enabled_key(vid),
+                            disabled=not is_api_key_ready,
+                        )
+                    with date_col2:
+                        st.text_input(
+                            "手入力日付",
+                            placeholder="例: 20260427 / 2026-04-27 / 4/27",
+                            key=_multi_manual_date_key(vid),
+                            disabled=(not is_api_key_ready) or (not date_enabled),
+                        )
 
                     source = st.selectbox(
                         f"タイムスタンプ取得元（{vtitle}）",
@@ -2447,49 +2469,46 @@ if input_mode == "自動（コメントから取得）":
                     )
 
                     if st.button(
-                        f"コメント候補を取得（{vtitle}）",
-                        key=f"ts_multi_fetch_comments_{vid}",
-                        disabled=(not is_api_key_ready) or (source not in ("コメント取得：関連度順", "コメント取得：新しい順")),
+                        "取得する",
+                        key=f"ts_multi_fetch_{vid}",
+                        disabled=not is_api_key_ready,
                     ):
-                        order = "relevance" if source == "コメント取得：関連度順" else "time"
-                        cands, err = fetch_timestamp_comment_candidates(
-                            video_id=vid,
-                            api_key=api_key_ts,
-                            order=order,
-                            search_terms=st.session_state.get("ts_auto_search_terms", ""),
-                            max_pages=int(st.session_state.get("ts_auto_pages", 1)),
-                        )
-                        if err:
-                            st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": f"コメント取得に失敗しました: {err}"}
-                            st.session_state[_multi_candidates_key(vid)] = []
-                        elif not cands:
-                            st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": "タイムスタンプ候補コメントが見つかりませんでした。"}
-                            st.session_state[_multi_candidates_key(vid)] = []
-                        else:
-                            st.session_state[_multi_candidates_key(vid)] = cands[:20]
-                            st.session_state[_multi_candidate_pick_key(vid)] = 0
-                            st.session_state[_multi_fetch_status_key(vid)] = {"level": "success", "message": f"コメント候補を {min(len(cands), 20)} 件取得しました。"}
-
-                    if st.button(
-                        f"概要欄から取得して入力欄へ反映（{vtitle}）",
-                        key=f"ts_multi_fetch_description_apply_{vid}",
-                        disabled=(not is_api_key_ready) or (source != "概要欄から取得"),
-                    ):
-                        text_key = _multi_text_key(vid)
-                        description, err = fetch_video_description(vid, api_key_ts)
-                        if err:
-                            st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": f"概要欄取得に失敗しました: {err}"}
-                        else:
-                            extracted = _extract_timestamp_lines(description, st.session_state.get("flip_ts", False))
-                            if not extracted:
-                                st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": "概要欄からタイムスタンプ行を検出できませんでした。"}
+                        if source == "手動入力":
+                            st.session_state[_multi_fetch_status_key(vid)] = {"level": "info", "message": "手動入力が選択されています。下の入力欄を直接編集してください。"}
+                        elif source in ("コメント取得：関連度順", "コメント取得：新しい順"):
+                            order = "relevance" if source == "コメント取得：関連度順" else "time"
+                            cands, err = fetch_timestamp_comment_candidates(
+                                video_id=vid,
+                                api_key=api_key_ts,
+                                order=order,
+                                search_terms=st.session_state.get("ts_auto_search_terms", ""),
+                                max_pages=int(st.session_state.get("ts_auto_pages", 1)),
+                            )
+                            if err:
+                                st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": f"コメント取得に失敗しました: {err}"}
+                                st.session_state[_multi_candidates_key(vid)] = []
+                            elif not cands:
+                                st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": "タイムスタンプ候補コメントが見つかりませんでした。"}
+                                st.session_state[_multi_candidates_key(vid)] = []
                             else:
-                                st.session_state[text_key] = extracted
-                                st.session_state[_multi_fetch_status_key(vid)] = {"level": "success", "message": "概要欄のタイムスタンプ行を入力欄へ反映しました。"}
+                                st.session_state[_multi_candidates_key(vid)] = cands[:20]
+                                st.session_state[_multi_candidate_pick_key(vid)] = 0
+                                st.session_state[_multi_fetch_status_key(vid)] = {"level": "success", "message": f"コメント候補を {min(len(cands), 20)} 件取得しました。"}
+                        else:
+                            text_key = _multi_text_key(vid)
+                            description, err = fetch_video_description(vid, api_key_ts)
+                            if err:
+                                st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": f"概要欄取得に失敗しました: {err}"}
+                            else:
+                                only_ts = bool(st.session_state.get("ts_auto_only_ts_lines", True))
+                                extracted = _extract_timestamp_lines(description, st.session_state.get("flip_ts", False)) if only_ts else (description or "").strip()
+                                if not extracted:
+                                    st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": "概要欄からタイムスタンプ行を検出できませんでした。"}
+                                else:
+                                    st.session_state[text_key] = extracted
+                                    st.session_state[_multi_fetch_status_key(vid)] = {"level": "success", "message": "概要欄のタイムスタンプ行を入力欄へ反映しました。"}
 
-                    if source == "手動入力":
-                        st.info("手動入力モードです。入力欄をそのまま編集してください。")
-                    elif source in ("コメント取得：関連度順", "コメント取得：新しい順"):
+                    if source in ("コメント取得：関連度順", "コメント取得：新しい順"):
                         cands = st.session_state.get(_multi_candidates_key(vid), []) or []
                         if cands:
                             pick_key = _multi_candidate_pick_key(vid)
