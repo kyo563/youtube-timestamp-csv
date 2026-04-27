@@ -769,7 +769,10 @@ def build_multi_video_rows(
     for vid in ordered_video_ids:
         it = items.get(vid) or {}
         video_url = (it.get("url") or "").strip()
-        ts_text = (it.get("applied_text") or "").strip()
+        ts_text = (it.get("timestamp_text") or it.get("applied_text") or "").strip()
+        item_manual_yyyymmdd = (it.get("manual_yyyymmdd") or manual_yyyymmdd or "").strip()
+        item_skip_date_fetch = bool(it.get("skip_date_fetch", skip_date_fetch))
+        item_prepend_date = bool(it.get("prepend_date", prepend_date))
         if not video_url:
             warnings.append(f"{vid}: 動画URLが空のためスキップ")
             continue
@@ -777,11 +780,11 @@ def build_multi_video_rows(
         if not ts_text:
             title = (it.get("title") or "").strip() or fetch_video_title_from_oembed(video_url)
             date_yyyymmdd, _ = resolve_display_date(
-                vid, manual_yyyymmdd, api_key, tz_name, skip_date_fetch=skip_date_fetch
+                vid, item_manual_yyyymmdd, api_key, tz_name, skip_date_fetch=item_skip_date_fetch
             )
 
             link = f"https://www.youtube.com/watch?v={vid}"
-            label = build_display_name(title, date_yyyymmdd, prepend_date=prepend_date)
+            label = build_display_name(title, date_yyyymmdd, prepend_date=item_prepend_date)
             hyperlink = make_excel_hyperlink(link, label)
             artist, song = split_artist_song_from_title(title)
             content_label = classify_content_label(
@@ -800,10 +803,10 @@ def build_multi_video_rows(
                 ts_text,
                 tz_name,
                 api_key,
-                manual_yyyymmdd,
+                item_manual_yyyymmdd,
                 flip,
-                prepend_date,
-                skip_date_fetch=skip_date_fetch,
+                item_prepend_date,
+                skip_date_fetch=item_skip_date_fetch,
             )
             for r in single_rows[1:]:
                 rows.append([r[0], r[1], r[2], r[3]])
@@ -836,7 +839,10 @@ def build_multi_video_preview(
     for vid in ordered_video_ids:
         it = items.get(vid) or {}
         video_url = (it.get("url") or "").strip()
-        ts_text = (it.get("applied_text") or "").strip()
+        ts_text = (it.get("timestamp_text") or it.get("applied_text") or "").strip()
+        item_manual_yyyymmdd = (it.get("manual_yyyymmdd") or manual_yyyymmdd or "").strip()
+        item_skip_date_fetch = bool(it.get("skip_date_fetch", skip_date_fetch))
+        item_prepend_date = bool(it.get("prepend_date", prepend_date))
         if not video_url:
             warnings.append(f"{vid}: 動画URLが空のためスキップ")
             continue
@@ -844,9 +850,9 @@ def build_multi_video_preview(
         if not ts_text:
             title = (it.get("title") or "").strip() or fetch_video_title_from_oembed(video_url)
             date_yyyymmdd, date_source = resolve_display_date(
-                vid, manual_yyyymmdd, api_key, tz_name, skip_date_fetch=skip_date_fetch
+                vid, item_manual_yyyymmdd, api_key, tz_name, skip_date_fetch=item_skip_date_fetch
             )
-            display_name = build_display_name(title, date_yyyymmdd, prepend_date=prepend_date)
+            display_name = build_display_name(title, date_yyyymmdd, prepend_date=item_prepend_date)
             artist, song = split_artist_song_from_title(title)
             preview_rows.append({
                 "video_id": vid,
@@ -866,10 +872,10 @@ def build_multi_video_preview(
                 ts_text,
                 tz_name,
                 api_key,
-                manual_yyyymmdd,
+                item_manual_yyyymmdd,
                 flip,
-                prepend_date,
-                skip_date_fetch=skip_date_fetch,
+                item_prepend_date,
+                skip_date_fetch=item_skip_date_fetch,
             )
             for p in parsed_preview:
                 preview_rows.append({
@@ -955,6 +961,26 @@ def _multi_text_key(video_id: str) -> str:
     return f"ts_multi_text_{video_id}"
 
 
+def _multi_source_key(video_id: str) -> str:
+    """複数動画の取得元選択で使う Session State キーを返す。"""
+    return f"ts_multi_source_{video_id}"
+
+
+def _multi_date_enabled_key(video_id: str) -> str:
+    """複数動画の日付付与ON/OFFで使う Session State キーを返す。"""
+    return f"ts_multi_date_enabled_{video_id}"
+
+
+def _multi_manual_date_key(video_id: str) -> str:
+    """複数動画の手入力日付で使う Session State キーを返す。"""
+    return f"ts_multi_manual_date_{video_id}"
+
+
+def _multi_fetch_status_key(video_id: str) -> str:
+    """複数動画の取得ステータス表示で使う Session State キーを返す。"""
+    return f"ts_multi_fetch_status_{video_id}"
+
+
 def _set_multi_text_state(video_id: str, text: str) -> None:
     """複数動画の採用テキストを Session State に反映する。"""
     st.session_state[_multi_text_key(video_id)] = text or ""
@@ -966,6 +992,23 @@ def _ensure_multi_text_state(video_id: str, fallback_text: str = "") -> str:
     if key not in st.session_state:
         st.session_state[key] = fallback_text or ""
     return key
+
+
+def _ensure_multi_video_state_defaults(video_id: str, fallback_text: str = "") -> None:
+    """複数動画の動画単位設定を必要時のみ初期化する。"""
+    _ensure_multi_text_state(video_id, fallback_text)
+    source_key = _multi_source_key(video_id)
+    if source_key not in st.session_state:
+        st.session_state[source_key] = "手動入力"
+    date_enabled_key = _multi_date_enabled_key(video_id)
+    if date_enabled_key not in st.session_state:
+        st.session_state[date_enabled_key] = True
+    manual_date_key = _multi_manual_date_key(video_id)
+    if manual_date_key not in st.session_state:
+        st.session_state[manual_date_key] = ""
+    fetch_status_key = _multi_fetch_status_key(video_id)
+    if fetch_status_key not in st.session_state:
+        st.session_state[fetch_status_key] = {"level": "", "message": ""}
 
 
 def _get_manual_yyyymmdd() -> str:
@@ -1367,24 +1410,23 @@ def cb_reflect_multi_inputs_to_preview() -> None:
         st.session_state["ts_multi_err"] = "反映対象の動画がありません。"
         return
 
-    for vid in ordered_ids:
-        it = items.get(vid)
-        if not it:
-            continue
-        it["applied_text"] = (st.session_state.get(_multi_text_key(vid), it.get("applied_text", "")) or "").strip()
-        items[vid] = it
-    st.session_state["ts_multi_items"] = items
-
     api_key = _get_ts_api_key()
     if not api_key:
         st.session_state["ts_multi_err"] = "プレビュー反映にはAPIキーが必要です。"
         return
 
+    current_items = collect_current_multi_video_items(
+        items=items,
+        ordered_video_ids=ordered_ids,
+        tz_name=TZ_NAME,
+        global_prepend_date=not st.session_state.get("ts_no_date_prefix", False),
+    )
+
     _clear_ts_preview_state(clear_csv=True)
 
     try:
         preview_rows, invalid_lines, warnings = build_multi_video_preview(
-            items=items,
+            items=current_items,
             ordered_video_ids=ordered_ids,
             tz_name=TZ_NAME,
             api_key=api_key,
@@ -1697,7 +1739,45 @@ def sync_multi_video_items_from_urls(raw_text: str) -> None:
 
     st.session_state["ts_multi_items"] = new_items
     for vid, it in new_items.items():
-        _ensure_multi_text_state(vid, it.get("applied_text", ""))
+        _ensure_multi_video_state_defaults(vid, it.get("applied_text", ""))
+
+
+def collect_current_multi_video_items(
+    items: Dict[str, dict],
+    ordered_video_ids: List[str],
+    tz_name: str,
+    global_prepend_date: bool,
+) -> Dict[str, dict]:
+    """複数動画の現在入力値を集約したコピーを返す。"""
+    current_items: Dict[str, dict] = {}
+    for vid in ordered_video_ids:
+        src = (items.get(vid) or {}).copy()
+        _ensure_multi_video_state_defaults(vid, src.get("applied_text", ""))
+
+        text_now = (st.session_state.get(_multi_text_key(vid), "") or "").strip()
+        source_now = st.session_state.get(_multi_source_key(vid), "手動入力")
+        date_enabled = bool(st.session_state.get(_multi_date_enabled_key(vid), True))
+        manual_raw = (st.session_state.get(_multi_manual_date_key(vid), "") or "").strip()
+
+        if not date_enabled:
+            manual_yyyymmdd = ""
+            skip_date_fetch = True
+            item_prepend_date = False
+        else:
+            manual_yyyymmdd = normalize_manual_date_input(manual_raw, tz_name) or ""
+            skip_date_fetch = False
+            item_prepend_date = bool(global_prepend_date and date_enabled)
+
+        src["applied_text"] = text_now
+        src["timestamp_text"] = text_now
+        src["source"] = source_now
+        src["manual_yyyymmdd"] = manual_yyyymmdd
+        src["skip_date_fetch"] = skip_date_fetch
+        src["prepend_date"] = item_prepend_date
+        src["date_enabled"] = date_enabled
+
+        current_items[vid] = src
+    return current_items
 
 
 # ==============================
@@ -2290,118 +2370,117 @@ if input_mode == "自動（コメントから取得）":
             items = st.session_state.get("ts_multi_items", {}) or {}
             ordered_ids = st.session_state.get("ts_multi_order", []) or []
             for vid in ordered_ids:
-                key = _multi_text_key(vid)
-                desired = ((items.get(vid) or {}).get("applied_text") or "")
-                if st.session_state.get(key) != desired:
-                    st.session_state[key] = desired
-            for vid in ordered_ids:
                 it = items.get(vid) or {}
                 vurl = it.get("url") or f"https://www.youtube.com/watch?v={vid}"
                 vtitle = (it.get("title") or "").strip() or f"動画 {vid}"
+                _ensure_multi_video_state_defaults(vid, it.get("applied_text", ""))
+
                 with st.expander(vtitle):
                     st.caption(vurl)
                     if it.get("error"):
-                        st.warning(it["error"])
-                        continue
+                        st.warning(f"初回取得時の状態: {it['error']}")
 
-                    cands = it.get("candidates", []) or []
-                    if cands:
-                        labels = []
-                        for i, c in enumerate(cands[:20], start=1):
-                            head = (c.get("text", "").splitlines()[0] if c.get("text") else "").strip()
-                            head = head[:60] + ("…" if len(head) > 60 else "")
-                            labels.append(f"[{i}] ts行={c.get('ts_lines')} / 👍{c.get('likeCount')} / {head}")
-                        picked = st.selectbox(f"候補（{vtitle}）", labels, key=f"ts_multi_pick_{vid}")
-                        picked_idx = labels.index(picked)
-                        st.button(
-                            f"この候補を採用（{vtitle}）",
-                            key=f"ts_multi_apply_{vid}",
-                            on_click=cb_apply_multi_candidate,
-                            kwargs={"video_id": vid, "index": picked_idx},
-                            disabled=not is_api_key_ready,
-                        )
+                    date_enabled = st.checkbox(
+                        f"日付を付与（{vtitle}）",
+                        key=_multi_date_enabled_key(vid),
+                        disabled=not is_api_key_ready,
+                    )
+                    st.text_input(
+                        f"手入力日付（{vtitle}）",
+                        placeholder="例: 2025/11/19, 11/19, 3月20日",
+                        key=_multi_manual_date_key(vid),
+                        disabled=(not is_api_key_ready) or (not date_enabled),
+                    )
+
+                    source = st.selectbox(
+                        f"タイムスタンプ取得元（{vtitle}）",
+                        ["手動入力", "コメント取得：関連度順", "コメント取得：新しい順", "概要欄から取得"],
+                        key=_multi_source_key(vid),
+                        disabled=not is_api_key_ready,
+                    )
+
+                    if st.button(
+                        f"取得して入力欄へ反映（{vtitle}）",
+                        key=f"ts_multi_fetch_apply_{vid}",
+                        disabled=not is_api_key_ready,
+                    ):
+                        status = {"level": "", "message": ""}
+                        text_key = _multi_text_key(vid)
+                        picked_text = ""
+                        if source == "手動入力":
+                            status = {"level": "info", "message": "手動入力モードです。入力欄をそのまま編集してください。"}
+                        elif source in ("コメント取得：関連度順", "コメント取得：新しい順"):
+                            order = "relevance" if source == "コメント取得：関連度順" else "time"
+                            cands, err = fetch_timestamp_comment_candidates(
+                                video_id=vid,
+                                api_key=api_key_ts,
+                                order=order,
+                                search_terms=st.session_state.get("ts_auto_search_terms", ""),
+                                max_pages=int(st.session_state.get("ts_auto_pages", 1)),
+                            )
+                            if err:
+                                status = {"level": "warning", "message": f"コメント取得に失敗しました: {err}"}
+                            elif not cands:
+                                status = {"level": "warning", "message": "タイムスタンプ候補コメントが見つかりませんでした。"}
+                            else:
+                                picked_text = cands[0].get("text", "")
+                                if st.session_state.get("ts_auto_only_ts_lines", True):
+                                    extracted = _extract_timestamp_lines(picked_text, st.session_state.get("flip_ts", False))
+                                    if extracted:
+                                        picked_text = extracted
+                                if picked_text.strip():
+                                    st.session_state[text_key] = picked_text.strip()
+                                    status = {"level": "success", "message": "コメント候補を入力欄へ反映しました。"}
+                                else:
+                                    status = {"level": "warning", "message": "コメントからタイムスタンプ行を抽出できませんでした。"}
+                        else:
+                            description, err = fetch_video_description(vid, api_key_ts)
+                            if err:
+                                status = {"level": "warning", "message": f"概要欄取得に失敗しました: {err}"}
+                            else:
+                                extracted = _extract_timestamp_lines(description, st.session_state.get("flip_ts", False))
+                                if not extracted:
+                                    status = {"level": "warning", "message": "概要欄からタイムスタンプ行を検出できませんでした。"}
+                                else:
+                                    st.session_state[text_key] = extracted
+                                    status = {"level": "success", "message": "概要欄のタイムスタンプ行を入力欄へ反映しました。"}
+
+                        st.session_state[_multi_fetch_status_key(vid)] = status
+
+                    fetch_status = st.session_state.get(_multi_fetch_status_key(vid), {"level": "", "message": ""}) or {}
+                    if fetch_status.get("message"):
+                        if fetch_status.get("level") == "success":
+                            st.success(fetch_status["message"])
+                        elif fetch_status.get("level") == "warning":
+                            st.warning(fetch_status["message"])
+                        else:
+                            st.info(fetch_status["message"])
 
                     edited = st.text_area(
-                        f"採用テキスト（{vtitle}）",
+                        f"タイムスタンプ編集欄（{vtitle}）",
                         height=140,
-                        key=_ensure_multi_text_state(vid, it.get("applied_text", "")),
+                        key=_multi_text_key(vid),
                         disabled=not is_api_key_ready,
                     )
                     it["applied_text"] = edited
                     items[vid] = it
             st.session_state["ts_multi_items"] = items
 
-            summary_rows = []
-            for vid in ordered_ids:
-                it = items.get(vid) or {}
-                applied_text = (it.get("applied_text") or "").strip()
-                lines = _split_lines_for_bulk_editor(applied_text)
-                for row_index, line in enumerate(lines, start=1):
-                    summary_rows.append({
-                        "video_id": vid,
-                        "動画タイトル": (it.get("title") or "").strip() or f"動画 {vid}",
-                        "URL": it.get("url") or f"https://www.youtube.com/watch?v={vid}",
-                        "行番号": row_index,
-                        "反映行テキスト": line,
-                        "反映行数": _count_timestamp_lines(applied_text),
-                    })
-
-            if summary_rows:
-                st.markdown("##### 2-e. 反映結果の確認・一括編集")
-                st.caption("2-b/2-cで取り込んだ内容を一覧で確認し、そのまま編集できます。")
-                col_e1, col_e2 = st.columns([1, 1])
-                with col_e1:
-                    st.button(
-                        "2-e. 入力内容をプレビューへ反映",
-                        key="ts_multi_refresh_candidates",
-                        on_click=cb_reflect_multi_inputs_to_preview,
-                        disabled=not is_api_key_ready,
-                    )
-                with col_e2:
-                    st.button(
-                        "2-e'. 採用テキストを全リセット",
-                        key="ts_multi_reset_inputs",
-                        on_click=cb_reset_timestamp_inputs,
-                        disabled=not is_api_key_ready,
-                    )
-                edited_summary = st.data_editor(
-                    pd.DataFrame(summary_rows),
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "video_id": st.column_config.TextColumn("video_id", width="small"),
-                        "動画タイトル": st.column_config.TextColumn("動画タイトル", width="large"),
-                        "URL": st.column_config.LinkColumn("URL", width="large"),
-                        "行番号": st.column_config.NumberColumn("行", width="small"),
-                        "反映行テキスト": st.column_config.TextColumn("反映行テキスト", width="large"),
-                        "反映行数": st.column_config.NumberColumn("反映行数", width="small"),
-                    },
-                    disabled=["video_id", "動画タイトル", "URL", "行番号", "反映行数"],
-                    key="ts_multi_applied_editor",
+            col_e1, col_e2 = st.columns([1, 1])
+            with col_e1:
+                st.button(
+                    "2-e. 入力内容をプレビューへ反映",
+                    key="ts_multi_refresh_candidates",
+                    on_click=cb_reflect_multi_inputs_to_preview,
+                    disabled=not is_api_key_ready,
                 )
-
-                if "video_id" in edited_summary and "反映行テキスト" in edited_summary:
-                    updated_lines: Dict[str, List[Tuple[int, str]]] = {}
-                    for _, row in edited_summary.iterrows():
-                        vid = str(row.get("video_id") or "").strip()
-                        if not vid or vid not in items:
-                            continue
-                        row_index = int(row.get("行番号") or 0)
-                        edited_line = str(row.get("反映行テキスト") or "")
-                        updated_lines.setdefault(vid, []).append((row_index, edited_line))
-
-                    changed = False
-                    for vid in ordered_ids:
-                        if vid not in items:
-                            continue
-                        pairs = sorted(updated_lines.get(vid, []), key=lambda x: x[0])
-                        merged_text = "\n".join([line for _, line in pairs if line.strip()]).strip()
-                        if (items[vid].get("applied_text") or "") != merged_text:
-                            items[vid]["applied_text"] = merged_text
-                            changed = True
-                    if changed:
-                        st.session_state["ts_multi_items"] = items
-                        st.rerun()
+            with col_e2:
+                st.button(
+                    "2-e'. 採用テキストを全リセット",
+                    key="ts_multi_reset_inputs",
+                    on_click=cb_reset_timestamp_inputs,
+                    disabled=not is_api_key_ready,
+                )
 
 if target_mode == "単体":
     timestamps_input_ts = st.text_area(
@@ -2473,8 +2552,14 @@ if preview_clicked:
                 st.error(f"エラー: {e}")
     else:
         try:
-            preview_rows, invalid_lines, warnings = build_multi_video_preview(
+            current_items = collect_current_multi_video_items(
                 items=st.session_state.get("ts_multi_items", {}) or {},
+                ordered_video_ids=st.session_state.get("ts_multi_order", []) or [],
+                tz_name=TZ_NAME,
+                global_prepend_date=prepend_date_ts,
+            )
+            preview_rows, invalid_lines, warnings = build_multi_video_preview(
+                items=current_items,
                 ordered_video_ids=st.session_state.get("ts_multi_order", []) or [],
                 tz_name=TZ_NAME,
                 api_key=api_key_ts,
@@ -2529,8 +2614,14 @@ if csv_clicked:
                 st.error(f"エラー: {e}")
     else:
         try:
-            rows, warnings = build_multi_video_rows(
+            current_items = collect_current_multi_video_items(
                 items=st.session_state.get("ts_multi_items", {}) or {},
+                ordered_video_ids=st.session_state.get("ts_multi_order", []) or [],
+                tz_name=TZ_NAME,
+                global_prepend_date=prepend_date_ts,
+            )
+            rows, warnings = build_multi_video_rows(
+                items=current_items,
                 ordered_video_ids=st.session_state.get("ts_multi_order", []) or [],
                 tz_name=TZ_NAME,
                 api_key=api_key_ts,
