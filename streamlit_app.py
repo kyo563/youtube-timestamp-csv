@@ -770,9 +770,18 @@ def build_multi_video_rows(
         it = items.get(vid) or {}
         video_url = (it.get("url") or "").strip()
         ts_text = (it.get("timestamp_text") or it.get("applied_text") or "").strip()
-        item_manual_yyyymmdd = (it.get("manual_yyyymmdd") or manual_yyyymmdd or "").strip()
-        item_skip_date_fetch = bool(it.get("skip_date_fetch", skip_date_fetch))
-        item_prepend_date = bool(it.get("prepend_date", prepend_date))
+        if "manual_yyyymmdd" in it:
+            item_manual_yyyymmdd = (it.get("manual_yyyymmdd") or "").strip()
+        else:
+            item_manual_yyyymmdd = (manual_yyyymmdd or "").strip()
+        if "skip_date_fetch" in it:
+            item_skip_date_fetch = bool(it.get("skip_date_fetch"))
+        else:
+            item_skip_date_fetch = bool(skip_date_fetch)
+        if "prepend_date" in it:
+            item_prepend_date = bool(it.get("prepend_date"))
+        else:
+            item_prepend_date = bool(prepend_date)
         if not video_url:
             warnings.append(f"{vid}: 動画URLが空のためスキップ")
             continue
@@ -840,9 +849,18 @@ def build_multi_video_preview(
         it = items.get(vid) or {}
         video_url = (it.get("url") or "").strip()
         ts_text = (it.get("timestamp_text") or it.get("applied_text") or "").strip()
-        item_manual_yyyymmdd = (it.get("manual_yyyymmdd") or manual_yyyymmdd or "").strip()
-        item_skip_date_fetch = bool(it.get("skip_date_fetch", skip_date_fetch))
-        item_prepend_date = bool(it.get("prepend_date", prepend_date))
+        if "manual_yyyymmdd" in it:
+            item_manual_yyyymmdd = (it.get("manual_yyyymmdd") or "").strip()
+        else:
+            item_manual_yyyymmdd = (manual_yyyymmdd or "").strip()
+        if "skip_date_fetch" in it:
+            item_skip_date_fetch = bool(it.get("skip_date_fetch"))
+        else:
+            item_skip_date_fetch = bool(skip_date_fetch)
+        if "prepend_date" in it:
+            item_prepend_date = bool(it.get("prepend_date"))
+        else:
+            item_prepend_date = bool(prepend_date)
         if not video_url:
             warnings.append(f"{vid}: 動画URLが空のためスキップ")
             continue
@@ -981,6 +999,16 @@ def _multi_fetch_status_key(video_id: str) -> str:
     return f"ts_multi_fetch_status_{video_id}"
 
 
+def _multi_candidates_key(video_id: str) -> str:
+    """複数動画のコメント候補一覧で使う Session State キーを返す。"""
+    return f"ts_multi_candidates_{video_id}"
+
+
+def _multi_candidate_pick_key(video_id: str) -> str:
+    """複数動画のコメント候補選択で使う Session State キーを返す。"""
+    return f"ts_multi_candidate_pick_{video_id}"
+
+
 def _set_multi_text_state(video_id: str, text: str) -> None:
     """複数動画の採用テキストを Session State に反映する。"""
     st.session_state[_multi_text_key(video_id)] = text or ""
@@ -1009,6 +1037,26 @@ def _ensure_multi_video_state_defaults(video_id: str, fallback_text: str = "") -
     fetch_status_key = _multi_fetch_status_key(video_id)
     if fetch_status_key not in st.session_state:
         st.session_state[fetch_status_key] = {"level": "", "message": ""}
+    candidates_key = _multi_candidates_key(video_id)
+    if candidates_key not in st.session_state:
+        st.session_state[candidates_key] = []
+    candidate_pick_key = _multi_candidate_pick_key(video_id)
+    if candidate_pick_key not in st.session_state:
+        st.session_state[candidate_pick_key] = 0
+
+
+def _format_multi_candidate_label(index: int, cand: dict) -> str:
+    """複数動画コメント候補の表示ラベルを作る。"""
+    text = (cand.get("text") or "").strip()
+    first_line = text.splitlines()[0].strip() if text else "(本文なし)"
+    if len(first_line) > 32:
+        first_line = first_line[:32] + "..."
+    owner = "配信者コメント" if cand.get("is_owner") else "視聴者コメント"
+    like_count = int(cand.get("likeCount") or 0)
+    ts_lines = int(cand.get("ts_lines") or 0)
+    published_at = (cand.get("publishedAt") or "").strip()
+    published_short = published_at[:10] if published_at else "-"
+    return f"[{index}] {owner} / ts行={ts_lines} / 👍{like_count} / {published_short} / {first_line}"
 
 
 def _get_manual_yyyymmdd() -> str:
@@ -1228,6 +1276,7 @@ def cb_fetch_multi_video_candidates() -> None:
     terms = st.session_state.get("ts_auto_search_terms", "")
     pages = int(st.session_state.get("ts_auto_pages", 1))
 
+    prev_items = st.session_state.get("ts_multi_items", {}) or {}
     items: Dict[str, dict] = {}
     fail_count = 0
     skip_count = 0
@@ -1284,19 +1333,17 @@ def cb_fetch_multi_video_candidates() -> None:
                 }
                 continue
 
-            default_text = cands[0]["text"] if cands else ""
-            if st.session_state.get("ts_auto_only_ts_lines", True):
-                extracted = _extract_timestamp_lines(default_text, st.session_state.get("flip_ts", False))
-                if extracted:
-                    default_text = extracted
+            default_text = (st.session_state.get(_multi_text_key(vid), "") or "").strip()
 
         items[vid] = {
             "url": u,
             "title": video_title,
             "candidates": cands,
-            "applied_text": default_text,
+            "applied_text": default_text or (prev_items.get(vid, {}) or {}).get("applied_text", ""),
             "error": "",
         }
+        st.session_state[_multi_candidates_key(vid)] = cands[:20]
+        st.session_state[_multi_candidate_pick_key(vid)] = 0
 
     st.session_state["ts_multi_items"] = items
     for vid, it in items.items():
@@ -2400,52 +2447,80 @@ if input_mode == "自動（コメントから取得）":
                     )
 
                     if st.button(
-                        f"取得して入力欄へ反映（{vtitle}）",
-                        key=f"ts_multi_fetch_apply_{vid}",
-                        disabled=not is_api_key_ready,
+                        f"コメント候補を取得（{vtitle}）",
+                        key=f"ts_multi_fetch_comments_{vid}",
+                        disabled=(not is_api_key_ready) or (source not in ("コメント取得：関連度順", "コメント取得：新しい順")),
                     ):
-                        status = {"level": "", "message": ""}
-                        text_key = _multi_text_key(vid)
-                        picked_text = ""
-                        if source == "手動入力":
-                            status = {"level": "info", "message": "手動入力モードです。入力欄をそのまま編集してください。"}
-                        elif source in ("コメント取得：関連度順", "コメント取得：新しい順"):
-                            order = "relevance" if source == "コメント取得：関連度順" else "time"
-                            cands, err = fetch_timestamp_comment_candidates(
-                                video_id=vid,
-                                api_key=api_key_ts,
-                                order=order,
-                                search_terms=st.session_state.get("ts_auto_search_terms", ""),
-                                max_pages=int(st.session_state.get("ts_auto_pages", 1)),
-                            )
-                            if err:
-                                status = {"level": "warning", "message": f"コメント取得に失敗しました: {err}"}
-                            elif not cands:
-                                status = {"level": "warning", "message": "タイムスタンプ候補コメントが見つかりませんでした。"}
-                            else:
-                                picked_text = cands[0].get("text", "")
-                                if st.session_state.get("ts_auto_only_ts_lines", True):
-                                    extracted = _extract_timestamp_lines(picked_text, st.session_state.get("flip_ts", False))
-                                    if extracted:
-                                        picked_text = extracted
-                                if picked_text.strip():
-                                    st.session_state[text_key] = picked_text.strip()
-                                    status = {"level": "success", "message": "コメント候補を入力欄へ反映しました。"}
-                                else:
-                                    status = {"level": "warning", "message": "コメントからタイムスタンプ行を抽出できませんでした。"}
+                        order = "relevance" if source == "コメント取得：関連度順" else "time"
+                        cands, err = fetch_timestamp_comment_candidates(
+                            video_id=vid,
+                            api_key=api_key_ts,
+                            order=order,
+                            search_terms=st.session_state.get("ts_auto_search_terms", ""),
+                            max_pages=int(st.session_state.get("ts_auto_pages", 1)),
+                        )
+                        if err:
+                            st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": f"コメント取得に失敗しました: {err}"}
+                            st.session_state[_multi_candidates_key(vid)] = []
+                        elif not cands:
+                            st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": "タイムスタンプ候補コメントが見つかりませんでした。"}
+                            st.session_state[_multi_candidates_key(vid)] = []
                         else:
-                            description, err = fetch_video_description(vid, api_key_ts)
-                            if err:
-                                status = {"level": "warning", "message": f"概要欄取得に失敗しました: {err}"}
-                            else:
-                                extracted = _extract_timestamp_lines(description, st.session_state.get("flip_ts", False))
-                                if not extracted:
-                                    status = {"level": "warning", "message": "概要欄からタイムスタンプ行を検出できませんでした。"}
-                                else:
-                                    st.session_state[text_key] = extracted
-                                    status = {"level": "success", "message": "概要欄のタイムスタンプ行を入力欄へ反映しました。"}
+                            st.session_state[_multi_candidates_key(vid)] = cands[:20]
+                            st.session_state[_multi_candidate_pick_key(vid)] = 0
+                            st.session_state[_multi_fetch_status_key(vid)] = {"level": "success", "message": f"コメント候補を {min(len(cands), 20)} 件取得しました。"}
 
-                        st.session_state[_multi_fetch_status_key(vid)] = status
+                    if st.button(
+                        f"概要欄から取得して入力欄へ反映（{vtitle}）",
+                        key=f"ts_multi_fetch_description_apply_{vid}",
+                        disabled=(not is_api_key_ready) or (source != "概要欄から取得"),
+                    ):
+                        text_key = _multi_text_key(vid)
+                        description, err = fetch_video_description(vid, api_key_ts)
+                        if err:
+                            st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": f"概要欄取得に失敗しました: {err}"}
+                        else:
+                            extracted = _extract_timestamp_lines(description, st.session_state.get("flip_ts", False))
+                            if not extracted:
+                                st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": "概要欄からタイムスタンプ行を検出できませんでした。"}
+                            else:
+                                st.session_state[text_key] = extracted
+                                st.session_state[_multi_fetch_status_key(vid)] = {"level": "success", "message": "概要欄のタイムスタンプ行を入力欄へ反映しました。"}
+
+                    if source == "手動入力":
+                        st.info("手動入力モードです。入力欄をそのまま編集してください。")
+                    elif source in ("コメント取得：関連度順", "コメント取得：新しい順"):
+                        cands = st.session_state.get(_multi_candidates_key(vid), []) or []
+                        if cands:
+                            pick_key = _multi_candidate_pick_key(vid)
+                            current_pick = int(st.session_state.get(pick_key, 0) or 0)
+                            if current_pick < 0 or current_pick >= len(cands):
+                                st.session_state[pick_key] = 0
+                            options = list(range(len(cands)))
+                            selected_idx = st.selectbox(
+                                f"コメント候補を選択（{vtitle}）",
+                                options,
+                                key=pick_key,
+                                format_func=lambda i: _format_multi_candidate_label(i + 1, cands[i]),
+                            )
+                            picked_text = (cands[selected_idx].get("text") or "").strip()
+                            with st.expander("選択中コメント候補（全文）"):
+                                st.text(picked_text or "(本文なし)")
+
+                            if st.button(
+                                f"選択した候補を入力欄へ反映（{vtitle}）",
+                                key=f"ts_multi_apply_candidate_{vid}",
+                                disabled=not is_api_key_ready,
+                            ):
+                                text_key = _multi_text_key(vid)
+                                apply_text = picked_text
+                                if st.session_state.get("ts_auto_only_ts_lines", True):
+                                    apply_text = _extract_timestamp_lines(apply_text, st.session_state.get("flip_ts", False))
+                                if apply_text.strip():
+                                    st.session_state[text_key] = apply_text.strip()
+                                    st.session_state[_multi_fetch_status_key(vid)] = {"level": "success", "message": "選択したコメント候補を入力欄へ反映しました。"}
+                                else:
+                                    st.session_state[_multi_fetch_status_key(vid)] = {"level": "warning", "message": "選択候補からタイムスタンプ行を抽出できませんでした。"}
 
                     fetch_status = st.session_state.get(_multi_fetch_status_key(vid), {"level": "", "message": ""}) or {}
                     if fetch_status.get("message"):
@@ -2563,7 +2638,7 @@ if preview_clicked:
                 ordered_video_ids=st.session_state.get("ts_multi_order", []) or [],
                 tz_name=TZ_NAME,
                 api_key=api_key_ts,
-                manual_yyyymmdd=manual_date_ts,
+                manual_yyyymmdd="",
                 flip=st.session_state.get("flip_ts", False),
                 prepend_date=prepend_date_ts,
                 skip_date_fetch=skip_date_fetch_ts,
@@ -2625,7 +2700,7 @@ if csv_clicked:
                 ordered_video_ids=st.session_state.get("ts_multi_order", []) or [],
                 tz_name=TZ_NAME,
                 api_key=api_key_ts,
-                manual_yyyymmdd=manual_date_ts,
+                manual_yyyymmdd="",
                 flip=st.session_state.get("flip_ts", False),
                 prepend_date=prepend_date_ts,
                 skip_date_fetch=skip_date_fetch_ts,
